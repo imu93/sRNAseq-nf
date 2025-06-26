@@ -1,11 +1,11 @@
 #!/usr/bin/env nextflow
-
 params.reads = "${launchDir}/test/*.fastq.gz"
 params.threads = 2
 params.adapter = "AGATCGGAAGAG"
 params.minlen = 18
 params.maxlen = 27
 params.genome = "${launchDir}/genome/caenorhabditis_elegans.PRJNA13758.WBPS19.genomic.fa"
+params.annotation = "${launchDir}/annotation/caenorhabditis_elegans.PRJNA13758.WBP19.overlapping_annotation.gff3"
 params.thr_ss = 12
 params.sm_ss = "12G"
 
@@ -13,8 +13,9 @@ reads_ch = Channel
     .fromPath( params.reads )
 
 genome_ch = Channel.fromPath(params.genome)
+annotation_ch = Channel.fromPath(params.annotation)
 summary_script_ch = Channel.fromPath("src/01.ss3_summary.R")
-
+featureCounts_script_ch = Channel.fromPath("src/02.featureCounts.R")
 
     
 process fastqc {
@@ -228,6 +229,25 @@ process bam2matrix {
   """
 }
 
+process featureCounts {
+    tag "${bam_file.simpleName}"
+    input:
+    path bam_file
+    path annotation
+    path featureCounts_script
+    
+    output:
+    path "*.txt", emit: table_of_counts
+    path "*.featureCounts", emit: featc_read_tables   
+    path "*.RDS", emit: featurecount_rds
+    publishDir "09.featureCounts", mode 'copy'
+    
+    script:
+    """
+    Rscript ${featureCounts_script} ${annotation} ${bam_file.join(" ")}
+    """
+}
+
 workflow {
     fastqc_out = fastqc(reads_ch)
     multiqc(fastqc_out.qc_zip.collect())
@@ -239,5 +259,5 @@ workflow {
     summarize_shortstack(ss_out, log_file, summary_script_ch)
     split_bam_result = split_bam(merged_bam)
     bam2matrix(split_bam_result.split_bams.flatten())
-
+    featureCounts(split_bam_result.split_bams.collect(),annotation_ch,featureCounts_script_ch)
 }

@@ -20,7 +20,7 @@ You can install the dependencies individually or set them up easily using **cond
 ```
 mamba create -n ss3_env -c bioconda -c conda-forge \
   shortstack=3.8.5 pullseq cutadapt fastqc multiqc pigz \
-  r-base r-pacman r-ggpubr r-biocmanager r-bioconductor-rsubread nextflow
+  r-base r-pacman r-ggpubr r-biocmanager bioconductor-rsubread nextflow
 ```
 ## How to run
 

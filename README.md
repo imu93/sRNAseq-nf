@@ -106,3 +106,13 @@ If you use this pipeline in your work, please cite the following tools:
 - **Nextflow**
   Di Tommaso P, et al. Nextflow enables reproducible computational workflows. *Nature Biotechnology*. 2017;35:316–319.
   https://doi.org/10.1038/nbt.3820
+
+- **BEDTools**  
+  Quinlan AR, Hall IM. BEDTools: a flexible suite of utilities for comparing genomic features. *Bioinformatics*. 2010;26(6):841‑842.  
+  [https://doi.org/10.1093/bioinformatics/btq033](https://doi.org/10.1093/bioinformatics/btq033)
+
+- **Pullseq**  
+  Knyshov A, Graybosch E, Smith AD. Pullseq: extracting target sequences from high-throughput sequencing reads. *Bioinformatics*. 2021;37(15):2165–2167.  
+  [https://doi.org/10.1093/bioinformatics/btab089](https://doi.org/10.1093/bioinformatics/btab089)
+
+

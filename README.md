@@ -1,6 +1,6 @@
 # Alignment of sRNAs using ShortStack
 
-This document describes my pipeline for small RNA (sRNA) alignment using **ShortStack**.  
+This document describes my pipeline for small RNA (sRNA) alignment using **ShortStack**.
 I have developed a **Nextflow** pipeline that processes raw FASTQ files and produces a table of counts generated with the **featureCounts** function from the **Rsubread** package.
 
 ## Installation
@@ -76,6 +76,8 @@ After successful execution, the pipeline will generate the following directories
 8. **08.bam_fn** – Tables with read length and first nucleotide information
 9. **09.featureCounts** – Count tables and detailed featureCounts outputs
 10. **10.bedGraphs** – bedGraph file with strand information for igv
+
+
 ## Citation
 
 If you use this pipeline in your work, please cite the following tools:
@@ -83,6 +85,11 @@ If you use this pipeline in your work, please cite the following tools:
 - **ShortStack**
   Axtell MJ. ShortStack: Comprehensive annotation and quantification of small RNA genes. *RNA*. 2013;19(6):740–751.
   https://doi.org/10.1261/rna.035279.112
+
+- **ShortStack (multi‑mapping improvements)**
+  Johnson NR, Yeoh JM, Coruh C, Axtell MJ. Improved Placement of Multi‑mapping Small RNAs. *G3: Genes|Genomes|Genetics*. 2016;6(7):2103–2111.
+  [https://doi.org/10.1534/g3.116.030452](https://doi.org/10.1534/g3.116.030452)
+
 
 - **Rsubread (featureCounts)**
   Liao Y, Smyth GK, Shi W. featureCounts: an efficient general purpose program for assigning sequence reads to genomic features. *Bioinformatics*. 2014;30(7):923–930.

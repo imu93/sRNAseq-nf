@@ -9,13 +9,13 @@ params.genome      = params.genome      ?: "${launchDir}/genome/caenorhabditis_e
 params.annotation  = params.annotation  ?: "${launchDir}/annotation/caenorhabditis_elegans.PRJNA13758.WBP19.overlapping_annotation.gff3"
 params.thr_ss      = params.thr_ss      ?: 12
 params.sm_ss       = params.sm_ss       ?: "12G"
+params.srcDir = "${workflow.projectDir}/src"
 
 reads_ch = Channel.fromPath(params.reads)
 genome_ch = Channel.fromPath(params.genome)
 annotation_ch = Channel.fromPath(params.annotation)
-summary_script_ch = Channel.fromPath("src/01.ss3_summary.R")
-featureCounts_script_ch = Channel.fromPath("src/02.featureCounts.R")
-
+summary_script_ch       = Channel.fromPath("${params.srcDir}/01.ss3_summary.R")
+featureCounts_script_ch = Channel.fromPath("${params.srcDir}/02.featureCounts.R")
     
 process fastqc {
     input:
@@ -247,6 +247,35 @@ process featureCounts {
     """
 }
 
+process bam2bedgraph {
+    tag "${bam_file.simpleName}"
+
+    input:
+    path bam_file
+
+    output:
+    path "*.bedGraph.gz", emit: bedgraphs
+
+    publishDir "10.bedGraphs", mode: 'copy'
+
+    script:
+    """
+    for file in *.bam; do
+        echo "Processing \$file"
+        outFile=\$(echo \$file | sed 's/\\..*//')
+
+        normScale=\$(bc <<< "scale=4;1000000/\$(samtools view -f 0 -c \$file)")
+
+        bedtools genomecov -ibam \$file -bg -scale \$normScale -strand '+' > \$outFile.us
+
+        bedtools genomecov -ibam \$file -bg -scale \$normScale -strand '-' | sed -r 's/([0-9]+)\$/-\\1/' >> \$outFile.us
+
+        bedtools sort -i \$outFile.us | pigz -c > \$outFile.bedGraph.gz
+        rm \$outFile.us
+    done
+    """
+}
+
 workflow {
     fastqc_out = fastqc(reads_ch)
     multiqc(fastqc_out.qc_zip.collect())
@@ -259,4 +288,5 @@ workflow {
     split_bam_result = split_bam(merged_bam)
     bam2matrix(split_bam_result.split_bams.flatten())
     featureCounts(split_bam_result.split_bams.collect(),annotation_ch,featureCounts_script_ch)
+    bam2bedgraph(split_bam_result.split_bams.flatten())
 }

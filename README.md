@@ -13,7 +13,8 @@ To run this pipeline, the following dependencies are required:
 4. MultiQC
 5. pigz
 6. R (with the **pacman** package installed at minimum)
-7. Nextflow
+7. Bedtools
+8. Nextflow
 
 You can install the dependencies individually or set them up easily using **conda**/**mamba**:
 ```
@@ -58,6 +59,12 @@ Once your parameters file is ready, run the pipeline with:
 ```
 nextflow run main.nf -c params.config
 ```
+
+![Workflow DAG](docs/flowchart.png)
+
+
+
+
 ## Outputs
 
 After successful execution, the pipeline will generate the following directories:
@@ -71,31 +78,31 @@ After successful execution, the pipeline will generate the following directories
 7. **07.bams** – Split BAM files per library
 8. **08.bam_fn** – Tables with read length and first nucleotide information
 9. **09.featureCounts** – Count tables and detailed featureCounts outputs
-
+10. **10.bedGraphs** – bedGraph file with strand information for igv
 ## Citation
 
 If you use this pipeline in your work, please cite the following tools:
 
-- **ShortStack**  
-  Axtell MJ. ShortStack: Comprehensive annotation and quantification of small RNA genes. *RNA*. 2013;19(6):740–751.  
+- **ShortStack**
+  Axtell MJ. ShortStack: Comprehensive annotation and quantification of small RNA genes. *RNA*. 2013;19(6):740–751.
   https://doi.org/10.1261/rna.035279.112
 
-- **Rsubread (featureCounts)**  
-  Liao Y, Smyth GK, Shi W. featureCounts: an efficient general purpose program for assigning sequence reads to genomic features. *Bioinformatics*. 2014;30(7):923–930.  
+- **Rsubread (featureCounts)**
+  Liao Y, Smyth GK, Shi W. featureCounts: an efficient general purpose program for assigning sequence reads to genomic features. *Bioinformatics*. 2014;30(7):923–930.
   https://doi.org/10.1093/bioinformatics/btt656
 
-- **Cutadapt**  
-  Martin M. Cutadapt removes adapter sequences from high-throughput sequencing reads. *EMBnet.journal*. 2011;17(1):10–12.  
+- **Cutadapt**
+  Martin M. Cutadapt removes adapter sequences from high-throughput sequencing reads. *EMBnet.journal*. 2011;17(1):10–12.
   https://doi.org/10.14806/ej.17.1.200
 
-- **FastQC**  
-  Andrews S. FastQC: A Quality Control tool for High Throughput Sequence Data. 2010.  
+- **FastQC**
+  Andrews S. FastQC: A Quality Control tool for High Throughput Sequence Data. 2010.
   https://www.bioinformatics.babraham.ac.uk/projects/fastqc/
 
-- **MultiQC**  
+- **MultiQC**
   Ewels P, Magnusson M, Lundin S, Käller M. MultiQC: summarize analysis results for multiple tools and samples in a single report. *Bioinformatics*. 2016;32(19):3047–3048.  
   https://doi.org/10.1093/bioinformatics/btw354
 
-- **Nextflow**  
-  Di Tommaso P, et al. Nextflow enables reproducible computational workflows. *Nature Biotechnology*. 2017;35:316–319.  
+- **Nextflow**
+  Di Tommaso P, et al. Nextflow enables reproducible computational workflows. *Nature Biotechnology*. 2017;35:316–319.
   https://doi.org/10.1038/nbt.3820

@@ -1,4 +1,4 @@
-# Alignment of sRNAs using ShortStack
+# Nexflow-based pipeline for small RNA alignment
 
 This document describes my pipeline for small RNA (sRNA) alignment using **ShortStack**.
 I have developed a **Nextflow** pipeline that processes raw FASTQ files and produces a table of counts generated with the **featureCounts** function from the **Rsubread** package.

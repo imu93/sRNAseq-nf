@@ -36,9 +36,9 @@ To run the pipeline you need a configuration file (`params.config`) specifying t
 8. Number of threads for ShortStack
 9. Memory for ShortStack
 
-> **Note:**  
-> The annotation file must contain **double‑stranded entries** for each genomic feature.  
-> A sample *C. elegans* annotation is provided in the `example` directory.  
+> **Note:**
+> The annotation file must contain **double‑stranded entries** for each genomic feature.
+> A sample *C. elegans* annotation is provided in the `example` directory.
 > If you need help preparing a compatible annotation, feel free to contact: **isaac.martinez@utoronto.ca**
 
 A typical `params.config` file looks like this:
@@ -82,6 +82,10 @@ After successful execution, the pipeline will generate the following directories
 
 If you use this pipeline in your work, please cite the following tools:
 
+- **sRNAseq-nf**
+  Martínez-Ugalde I. sRNAseq-nf: Nextflow‑based pipeline for small RNA alignment. 
+  [https://github.com/imu93/sRNAseq-nf]
+
 - **ShortStack**
   Axtell MJ. ShortStack: Comprehensive annotation and quantification of small RNA genes. *RNA*. 2013;19(6):740–751.
   https://doi.org/10.1261/rna.035279.112
@@ -89,7 +93,6 @@ If you use this pipeline in your work, please cite the following tools:
 - **ShortStack (multi‑mapping improvements)**
   Johnson NR, Yeoh JM, Coruh C, Axtell MJ. Improved Placement of Multi‑mapping Small RNAs. *G3: Genes|Genomes|Genetics*. 2016;6(7):2103–2111.
   [https://doi.org/10.1534/g3.116.030452](https://doi.org/10.1534/g3.116.030452)
-
 
 - **Rsubread (featureCounts)**
   Liao Y, Smyth GK, Shi W. featureCounts: an efficient general purpose program for assigning sequence reads to genomic features. *Bioinformatics*. 2014;30(7):923–930.
@@ -118,5 +121,3 @@ If you use this pipeline in your work, please cite the following tools:
 - **Pullseq**
   Pullseq: A Utility Program for Extracting Sequences from a Fasta/Fastq File.
   Available online: [https://github.com/bcthomas/pullseq](https://github.com/bcthomas/pullseq) (accessed on 1 June 2023).
-
-

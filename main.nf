@@ -1,17 +1,16 @@
 #!/usr/bin/env nextflow
-params.reads = "${launchDir}/test/*.fastq.gz"
-params.threads = 2
-params.adapter = "AGATCGGAAGAG"
-params.minlen = 18
-params.maxlen = 27
-params.genome = "${launchDir}/genome/caenorhabditis_elegans.PRJNA13758.WBPS19.genomic.fa"
-params.annotation = "${launchDir}/annotation/caenorhabditis_elegans.PRJNA13758.WBP19.overlapping_annotation.gff3"
-params.thr_ss = 12
-params.sm_ss = "12G"
 
-reads_ch = Channel
-    .fromPath( params.reads )
+params.reads       = params.reads       ?: "${launchDir}/test/*.fastq.gz"
+params.threads     = params.threads     ?: 2
+params.adapter     = params.adapter     ?: "AGATCGGAAGAG"
+params.minlen      = params.minlen      ?: 18
+params.maxlen      = params.maxlen      ?: 27
+params.genome      = params.genome      ?: "${launchDir}/genome/caenorhabditis_elegans.PRJNA13758.WBPS19.genomic.fa"
+params.annotation  = params.annotation  ?: "${launchDir}/annotation/caenorhabditis_elegans.PRJNA13758.WBP19.overlapping_annotation.gff3"
+params.thr_ss      = params.thr_ss      ?: 12
+params.sm_ss       = params.sm_ss       ?: "12G"
 
+reads_ch = Channel.fromPath(params.reads)
 genome_ch = Channel.fromPath(params.genome)
 annotation_ch = Channel.fromPath(params.annotation)
 summary_script_ch = Channel.fromPath("src/01.ss3_summary.R")
@@ -240,7 +239,7 @@ process featureCounts {
     path "*.txt", emit: table_of_counts
     path "*.featureCounts", emit: featc_read_tables   
     path "*.RDS", emit: featurecount_rds
-    publishDir "09.featureCounts", mode 'copy'
+    publishDir "09.featureCounts", mode: 'copy'
     
     script:
     """

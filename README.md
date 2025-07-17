@@ -45,13 +45,13 @@ To run the pipeline you need a configuration file (`params.config`) specifying t
 A typical `params.config` file looks like this:
 ```
 params {
-  reads       = "/home/isaac/storage/Data/CELE_ANN/nextflow/test/*.fastq.gz"
+  reads       = "path_to_fastq_files/*.fastq.gz"
   threads     = 4
   adapter     = "AGATCGGAAGAG"
   minlen      = 18
   maxlen      = 27
-  genome      = "/home/isaac/storage/Data/CELE_ANN/nextflow/genome/caenorhabditis_elegans.PRJNA13758.WBPS19.genomic.fa"
-  annotation  = "/home/isaac/storage/Data/CELE_ANN/nextflow/annotation/caenorhabditis_elegans.PRJNA13758.WBP19.overlapping_annotation.gff3"
+  genome      = "path_to_genome_fasta_file/caenorhabditis_elegans.PRJNA13758.WBPS19.genomic.fa"
+  annotation  = "path_to_annotation_gff3_file/caenorhabditis_elegans.PRJNA13758.WBP19.overlapping_annotation.gff3"
   thr_ss      = 12
   sm_ss       = "12G"
 }

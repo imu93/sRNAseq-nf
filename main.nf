@@ -228,6 +228,24 @@ process bam2matrix {
   """
 }
 
+process plot_firstnt {
+    tag "Plot first nucleotide distributions"
+    input:
+    path txt_files
+
+    output:
+    path "length_dit_fn_percentage.pdf", emit: pdf_percentage
+    path "length_dit_fn_cp.pdf",        emit: pdf_cpm
+
+    publishDir "11.fn_plots", mode: 'copy'
+
+    script:
+    """
+    Rscript ${params.srcDir}/03.get_fn_plots.R ${params.minlen} ${params.maxlen}
+    """
+}
+
+
 process featureCounts {
     tag "${bam_file.simpleName}"
     input:
@@ -286,7 +304,7 @@ workflow {
     (ss_out, log_file, merged_bam) = shortstack(genome_ch, pulled_reads.collect())
     summarize_shortstack(ss_out, log_file, summary_script_ch)
     split_bam_result = split_bam(merged_bam)
-    bam2matrix(split_bam_result.split_bams.flatten())
+    plot_firstnt(bam2matrix(split_bam_result.split_bams.flatten()).collect())
     featureCounts(split_bam_result.split_bams.collect(),annotation_ch,featureCounts_script_ch)
     bam2bedgraph(split_bam_result.split_bams.flatten())
 }

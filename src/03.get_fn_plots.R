@@ -42,7 +42,7 @@ names(cpm_f_lst) <- names(cpm_f_lst) %>%
   str_replace("_[^_]+$", "")
 
 # Bind gorups of libraries based on their condition (ID)
-all_df <- bind_rows(cpm_f_lst, .id = "Condition")
+all_df = bind_rows(cpm_f_lst, .id = "Condition")
 
 # Build final tibble using average values per condition 
 df = all_df %>%

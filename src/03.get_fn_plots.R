@@ -59,7 +59,7 @@ df$fn = gsub("T", "U", df$fn)
 df$fn = factor(df$fn, levels = c("G", "U", "A", "C"))
 df$length = as.character(df$length)  
 df$length = factor(df$length, levels = c(min_length:max_length))
-df = df %>% filter(!str_detect(tolower(Condition), "input"))
+#df = df %>% filter(!str_detect(tolower(Condition), "input"))
 
 # Colors per first nt
 colors = c("#FFD600", "#DE0B00", "#05A61C", "#0314A8")

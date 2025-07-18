@@ -37,7 +37,7 @@ cpm_list = NULL
 tmp.tb = NULL
 
 # Edit lib IDs to group 
-names(cpm_f_lst) <- names(cpm_f_lst) %>% 
+names(cpm_f_lst) = names(cpm_f_lst) %>% 
   str_replace("\\.length_firstnt\\.txt$", "") %>% 
   str_replace("_[^_]+$", "")
 

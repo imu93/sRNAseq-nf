@@ -18,7 +18,7 @@ cpm_list = lapply(tabs, function(x){
   tmp.x = tmp.x[tmp.x$fn != "N",]
   total_reads = nrow(tmp.x)
   tmp.df = tmp.x %>%
-    count(length, fn) %>%
+    dplyt::count(length, fn) %>%
     group_by(length) %>%
     mutate(CPM = (n / total_reads) * 1e6)
 })
@@ -47,7 +47,7 @@ all_df = bind_rows(cpm_f_lst, .id = "Condition")
 # Build final tibble using average values per condition 
 df = all_df %>%
   group_by(Condition, length, fn) %>%
-  summarise(
+  dplyr::summarise(
     n = mean(n),
     CPM = mean(CPM),
     percentage = mean(percentage),

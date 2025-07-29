@@ -218,13 +218,31 @@ process bam2matrix {
   script:
   """
   sample=\$(basename "${bam_file}" .bam | sed 's/.trim.mapped\$//')
+
   samtools view "${bam_file}" | \\
-    awk '{
-      seq = \$10
-      len = length(seq)
-      first_nt = substr(seq, 1, 1)
-      print len, first_nt
-    }' > "\${sample}.length_firstnt.txt"
+  awk '
+  function revcomp(seq,    rev, i, base) {
+    rev = ""
+    for (i = length(seq); i > 0; i--) {
+      base = substr(seq, i, 1)
+      if (base == "A") base = "T"
+      else if (base == "C") base = "G"
+      else if (base == "G") base = "C"
+      else if (base == "T") base = "A"
+      rev = rev base
+    }
+    return rev
+  }
+  {
+    flag = \$2
+    seq = \$10
+    if ((and(flag, 16)) > 0) {
+      seq = revcomp(seq)
+    }
+    len = length(seq)
+    first_nt = substr(seq, 1, 1)
+    print len, first_nt
+  }' > "\${sample}.length_firstnt.txt"
   """
 }
 

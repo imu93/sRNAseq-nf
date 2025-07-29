@@ -236,7 +236,7 @@ process bam2matrix {
   {
     flag = \$2
     seq = \$10
-    if ((and(flag, 16)) > 0) {
+    if (flag == 16) {
       seq = revcomp(seq)
     }
     len = length(seq)

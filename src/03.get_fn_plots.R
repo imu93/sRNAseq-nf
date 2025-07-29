@@ -18,7 +18,7 @@ cpm_list = lapply(tabs, function(x){
   tmp.x = tmp.x[tmp.x$fn != "N",]
   total_reads = nrow(tmp.x)
   tmp.df = tmp.x %>%
-    dplyt::count(length, fn) %>%
+    dplyr::count(length, fn) %>%
     group_by(length) %>%
     mutate(CPM = (n / total_reads) * 1e6)
 })

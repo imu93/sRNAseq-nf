@@ -77,7 +77,7 @@ After successful execution, the pipeline will generate the following directories
 8. **08.bam_fn** – Tables with read length and first nucleotide information
 9. **09.featureCounts** – Count tables and detailed featureCounts outputs
 10. **10.bedGraphs** – bedGraph file with strand information for igv
-
+11. **11.fn_plots** – first nt plots
 
 ## Citation
 

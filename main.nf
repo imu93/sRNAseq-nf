@@ -223,6 +223,7 @@ process bam2Rds {
     """
 }
 
+<<<<<<< HEAD
 process fn_mtx {
     tag "Get first-nucleotide matrices"
 
@@ -239,6 +240,37 @@ process fn_mtx {
     """
     Rscript ${fnmtx_script}
     """
+=======
+  script:
+  """
+  sample=\$(basename "${bam_file}" .bam | sed 's/.trim.mapped\$//')
+
+  samtools view "${bam_file}" | \\
+  awk '
+  function revcomp(seq,    rev, i, base) {
+    rev = ""
+    for (i = length(seq); i > 0; i--) {
+      base = substr(seq, i, 1)
+      if (base == "A") base = "T"
+      else if (base == "C") base = "G"
+      else if (base == "G") base = "C"
+      else if (base == "T") base = "A"
+      rev = rev base
+    }
+    return rev
+  }
+  {
+    flag = \$2
+    seq = \$10
+    if (flag == 16) {
+      seq = revcomp(seq)
+    }
+    len = length(seq)
+    first_nt = substr(seq, 1, 1)
+    print len, first_nt
+  }' > "\${sample}.length_firstnt.txt"
+  """
+>>>>>>> e0d1cecd1577b4c4976b7d6e7b98d7f2aa0a3986
 }
 
 process plot_firstnt {

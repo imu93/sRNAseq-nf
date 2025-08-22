@@ -15,6 +15,8 @@ reads_ch = Channel.fromPath(params.reads)
 genome_ch = Channel.fromPath(params.genome)
 annotation_ch = Channel.fromPath(params.annotation)
 summary_script_ch       = Channel.fromPath("${params.srcDir}/01.ss3_summary.R")
+bam2Rds_script_ch	= Channel.fromPath("${params.srcDir}/01.bam2Rds.R")
+fnmtx_script_ch         = Channel.fromPath("${params.srcDir}/02.get_fn_mtx.R")
 featureCounts_script_ch = Channel.fromPath("${params.srcDir}/02.featureCounts.R")
     
 process fastqc {
@@ -204,46 +206,39 @@ process split_bam {
   """
 }
 
-process bam2matrix {
-  tag "${bam_file.simpleName}"
+process bam2Rds {
+    tag "${bam_file.simpleName}"
+    input:
+    path bam2Rds_script
+    path bam_file
 
-  input:
-  path bam_file
+    output:
+    path "*.Rds", emit: matrices
 
-  output:
-  path "*.length_firstnt.txt", emit: matrices
+    publishDir "08.rds", mode: 'copy'
 
-  publishDir "08.bam_fn", mode: 'copy'
+    script:
+    """
+    Rscript ${bam2Rds_script}
+    """
+}
 
-  script:
-  """
-  sample=\$(basename "${bam_file}" .bam | sed 's/.trim.mapped\$//')
+process fn_mtx {
+    tag "Get first-nucleotide matrices"
 
-  samtools view "${bam_file}" | \\
-  awk '
-  function revcomp(seq,    rev, i, base) {
-    rev = ""
-    for (i = length(seq); i > 0; i--) {
-      base = substr(seq, i, 1)
-      if (base == "A") base = "T"
-      else if (base == "C") base = "G"
-      else if (base == "G") base = "C"
-      else if (base == "T") base = "A"
-      rev = rev base
-    }
-    return rev
-  }
-  {
-    flag = \$2
-    seq = \$10
-    if (flag == 16) {
-      seq = revcomp(seq)
-    }
-    len = length(seq)
-    first_nt = substr(seq, 1, 1)
-    print len, first_nt
-  }' > "\${sample}.length_firstnt.txt"
-  """
+    input:
+    path fnmtx_script
+    path rds_files
+
+    output:
+    path "first_nt_rlength.Rds", emit: matrices
+
+    publishDir "09.fn_mtx", mode: 'copy'
+
+    script:
+    """
+    Rscript ${fnmtx_script}
+    """
 }
 
 process plot_firstnt {
@@ -253,13 +248,12 @@ process plot_firstnt {
 
     output:
     path "length_dit_fn_percentage.pdf", emit: pdf_percentage
-    path "length_dit_fn_cp.pdf",        emit: pdf_cpm
 
     publishDir "11.fn_plots", mode: 'copy'
 
     script:
     """
-    Rscript ${params.srcDir}/03.get_fn_plots.R ${params.minlen} ${params.maxlen}
+    Rscript ${params.srcDir}/03.plot_fn.R ${params.minlen} ${params.maxlen}
     """
 }
 
@@ -322,7 +316,9 @@ workflow {
     (ss_out, log_file, merged_bam) = shortstack(genome_ch, pulled_reads.collect())
     summarize_shortstack(ss_out, log_file, summary_script_ch)
     split_bam_result = split_bam(merged_bam)
-    plot_firstnt(bam2matrix(split_bam_result.split_bams.flatten()).collect())
+    rds = bam2Rds(bam2Rds_script_ch, split_bam_result.split_bams.flatten().collect())
+    matrix = fn_mtx(fnmtx_script_ch, rds.matrices.collect())
+    plots = plot_firstnt(matrix.matrices)
     featureCounts(split_bam_result.split_bams.collect(),annotation_ch,featureCounts_script_ch)
     bam2bedgraph(split_bam_result.split_bams.flatten())
 }

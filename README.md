@@ -74,10 +74,11 @@ After successful execution, the pipeline will generate the following directories
 5. **05.ShortStack** – Raw alignment and analysis results from ShortStack
 6. **06.summary** – PDF summary of uniquely and multi-mapping reads
 7. **07.bams** – Split BAM files per library
-8. **08.bam_fn** – Tables with read length and first nucleotide information
-9. **09.featureCounts** – Count tables and detailed featureCounts outputs
-10. **10.bedGraphs** – bedGraph file with strand information for igv
-11. **11.fn_plots** – first nt plots
+8. **08.rds** – GRanges objects (per library) with read information for fn plots
+9. **09.fn_mtx** - RDS object with matrices sumarising length (eg. 18-27) and fisrt nt at the 5' end
+10. **09.featureCounts** – Count tables and detailed featureCounts outputs
+11. **10.bedGraphs** – bedGraph file with strand information for igv
+12. **11.fn_plots** – Average first nt plots per condition
 
 ## Citation
 

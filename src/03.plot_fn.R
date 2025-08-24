@@ -77,7 +77,7 @@ percetage_plot = df %>% ggplot(aes(x=length, y=percentage, fill=nt)) +
         legend.position = "bottom",
         legend.text = element_text(size=14),
         strip.text = element_text(size=18)) +
-  scale_x_discrete(breaks = tick_lengths) + ylim(c(0,35))
+  scale_x_discrete(breaks = tick_lengths) 
 
 ggsave("length_dit_fn_percentage.pdf", device = "pdf", width = 5, height =  5,
        path = "./", plot = percetage_plot, dpi = 300)

@@ -1,0 +1,35 @@
+nextflow_pipeline {
+  name   "sRNAseq-nf smoke test"
+  script "main.nf"
+  test("Run on tiny dataset, stop before DEA") {
+    when {
+      params {
+	outdir                    = ".nf-test/out"
+        reads                     = "${projectDir}/example/fastq/*.fastq.gz"
+        genome                    = "${projectDir}/example/genome/caenorhabditis_elegans.PRJNA13758.WBPS19.genomic.fa"
+        annotation                = "${projectDir}/example/annotation/caenorhabditis_elegans.PRJNA13758.WBP19.overlapping_annotation.gff3"
+        contrast                  = "${projectDir}/example/contrast.txt"
+        threads                   = 4
+        adapter                   = "AGATCGGAAGAG"
+        minlen                    = 20
+        maxlen                    = 22
+        apply_first_nt_downstream = false
+      }
+    }
+    then {
+    then {
+   assert workflow.success
+   // find the (only) hash dir nf-test created this run
+   def runRoot = path(".nf-test/tests").toFile()
+   def hashDir = runRoot.listFiles().find { it.isDirectory() && it.name != "pipeline" }
+   assert hashDir : "nf-test run dir not found"
+
+   assert path("${hashDir}/01.raw_qc/multiqc_report.html").exists()
+   assert path("${hashDir}/06.summary/ShortStack_summary.png").exists()
+   assert path("${hashDir}/11.fn_plots/length_dit_fn_percentage.png").exists()
+}
+
+}
+
+  }
+}

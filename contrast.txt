@@ -1,0 +1,5 @@
+contrast	type	group	c_name	order
+ce_prg1_Ip-ce_prg1_input	prg1	Ip	ce_prg1_Ip_1	1
+ce_prg1_Ip-ce_prg1_input	prg1	Ip	ce_prg1_Ip_2	1
+ce_prg1_Ip-ce_prg1_input	prg1	input	ce_prg1_input_1	2
+ce_prg1_Ip-ce_prg1_input	prg1	input	ce_prg1_input_2	2

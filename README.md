@@ -35,7 +35,7 @@ bash Miniforge3-$(uname)-$(uname -m).sh
 Then build srnanf environment
 ```bash
 mamba create -n srnanf_env -c conda-forge -c bioconda -c defaults \
-  python=3.11  bowtie pigz bc cutadapt fastqc multiqc bedtools \
+  python=3.11  bowtie pigz bc cutadapt fastqc multiqc bedtools fastp \
   samtools pullseq gawk openjdk=17 nextflow nf-test pysam tqdm \
   r-base=4.3.1 bioconductor-rsubread bioconductor-rtracklayer  \
   bioconductor-edger bioconductor-plyranges bioconductor-rsamtools \

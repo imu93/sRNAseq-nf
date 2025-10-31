@@ -187,9 +187,13 @@ subset of the PIWI Argonaute (PRG-1) Ip and Input libraries from *C. elegans* (S
 First extract files:
 ```
 SRCPATH=/path/to/sRNAseq-nf
-tar zxvf $SRCPATH/example/fastq_test.tar.gz
-for f in $SRCPATH/example/fastq/*.zst; do zstd -d "$f"; rm -rf *.zst ; done
-for f in $SRCPATH/example/fastq/*.fastq; do pigz $f;done
+cd $SRCPATH/example/
+tar xvf  fastq_test.tar.gz
+cd fastq
+for f in *.zst; do zstd -d "$f"; rm -rf *.zst ; done
+for f in *.fastq; do pigz $f;done
+cd ..
+cd ..
 ```
 Now init nf-test
 ```

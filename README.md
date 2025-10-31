@@ -37,7 +37,8 @@ Then build srnanf environment
 mamba create -n srnanf_env -c conda-forge -c bioconda -c defaults \
   python=3.11  bowtie pigz bc cutadapt fastqc multiqc bedtools fastp \
   samtools pullseq gawk openjdk=17 nextflow nf-test pysam tqdm numba \
-  r-base=4.3.1 bioconductor-rsubread bioconductor-rtracklayer  \
+  clang make cmake llvm-openmp \
+  r-base=4.4 bioconductor-rsubread bioconductor-rtracklayer  \
   bioconductor-edger bioconductor-plyranges bioconductor-rsamtools \
   r-pacman r-ggplot2 r-ggpubr r-dplyr r-purrr r-gplots r-optparse r-reshape r-reshape2 \
   r-kableextra r-ggbreak r-stringr r-pals r-stringi r-scales r-tidyr r-tibble
@@ -47,8 +48,18 @@ conda activate srnanf_env
 Or using the provided yml file:
 ```
 mamba env create -f srnanf_env.yml
+conda activate srnanf_env
 ```
 
+On this sRNAseq-nf version users need to compile the collaps module for siRmap:
+```
+SRCPATH=/path/to/sRNAseq-nf
+cd $SRCPATH
+cd bin
+gcc -O3 -march=native -pipe -DNDEBUG collapse.c -o collapse -lz
+cd ..
+```
+> Note: the next version of sRNAseq-nf will include this out of the box
 ---
 ### HPC considerations
 In case conda/mamba is not accessible an apptainer .def file is distributed in this repository **sRNAseq-nf/env/**. 

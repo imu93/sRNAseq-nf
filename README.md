@@ -36,7 +36,7 @@ Then build srnanf environment
 ```bash
 mamba create -n srnanf_env -c conda-forge -c bioconda -c defaults \
   python=3.11  bowtie pigz bc cutadapt fastqc multiqc bedtools fastp \
-  samtools pullseq gawk openjdk=17 nextflow nf-test pysam tqdm \
+  samtools pullseq gawk openjdk=17 nextflow nf-test pysam tqdm numba \
   r-base=4.3.1 bioconductor-rsubread bioconductor-rtracklayer  \
   bioconductor-edger bioconductor-plyranges bioconductor-rsamtools \
   r-pacman r-ggplot2 r-ggpubr r-dplyr r-purrr r-gplots r-optparse r-reshape r-reshape2 \

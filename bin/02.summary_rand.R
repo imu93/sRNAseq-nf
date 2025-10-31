@@ -1,3 +1,4 @@
+setwd("~/storage/Data/CELE_ANN/BENCHMARK/sRNAseq_nf/Results_20251030_124414/06.resolved_random")
 pacman::p_load(ggplot2, pals, scales, ggpubr)
 logs = list.files(pattern = ".*.log")
 files = lapply(logs, readLines)
@@ -10,11 +11,11 @@ for (i in names(files)) {
     as.numeric(gsub("[ ,]", "", sub(".*:", "", x[grepl(key, x)])))
   }
   
-  uq  = get_num("Uniq")
-  mm  = get_num("Multi")
+  uq  = get_num("Unique reads")
+  mm  = get_num("Multimapper reads")
   #rt  = get_num("Rand")
   #mm  = mm-rt
-  tot = get_num("Colla")
+  tot = get_num("Reads written")
   
   
   df = data.frame("ID"=i, "Class"=c("Unique", "Multimappers"),

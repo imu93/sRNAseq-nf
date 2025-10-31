@@ -179,6 +179,7 @@ gene_norm_list = list()
 ma_norm_lst = list()
 
 
+
 for ( cont in names(conts)) {
   print(cont)
   contrast_id = cont
@@ -597,11 +598,13 @@ for ( cont in names(conts)) {
   outDGE = paste0(outPath_3, "other.norm_dge.Rds")
   outDGE = sub("other", ncont, outDGE)
   saveRDS(dge, outDGE)
+
 }
 
-##################################################################################
-# Save each individual plot
 
+
+
+##################################################################################
 for (i in names(tmm_ma)) {
   print(i)
   tmp.plot = tmm_ma[[i]]

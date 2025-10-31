@@ -1,4 +1,3 @@
-# This script aims to produce fn plots after ShortStack
 # This is script must be polished since I'm just looking for 
 # reads in a range of 18-27
 pacman::p_load(ggplot2, dplyr, stringr, reshape2, tidyr, tibble, purrr)
@@ -6,23 +5,26 @@ args = commandArgs(trailingOnly = TRUE)
 min_length = as.integer(args[1])
 max_length = as.integer(args[2])
 
-files = "first_nt_rlength.Rds"
-tabs = readRDS(files)
+files = list.files(pattern = "expanded.firstnt.tsv")
+tabs = lapply(files, function(x){read.table(x, sep = "\t", header = T)})
 #tabs = tabs[grepl("Ip", names(tabs))]
-
-names(tabs) = sub(".trim.mapped.Rds", "", names(tabs)) 
+names(tabs) = sub(".ps.fastq.collapsed.expanded.firstnt.tsv", "", files) 
 
 tabs = lapply(tabs, function(m) {
   m[is.na(m)] <- 0
+  m$sample = NULL
+  m$total = NULL
+  rownames(m) = m$length
+  m$length = NULL
   return(m)
 })
 
 tab_counts = imap_dfr(tabs, ~ as.data.frame(.x) %>%
-                          rownames_to_column("length") %>%
-                          pivot_longer(-length, names_to = "nt", values_to = "count") %>%
-                          mutate(
-                            sample = .y,
-                            length = as.numeric(length)))
+                        rownames_to_column("length") %>%
+                        pivot_longer(-length, names_to = "nt", values_to = "count") %>%
+                        mutate(
+                          sample = .y,
+                          length = as.numeric(length)))
 
 tabs  = split(tab_counts, tab_counts$sample)
 
@@ -50,6 +52,8 @@ df = all_df %>%
     .groups = "drop"
   )
 
+min_length = 18
+max_length = 27
 # keep requested length range first, then format
 df = df %>% filter(length >= min_length, length <= max_length)
 
@@ -58,7 +62,7 @@ df$nt = gsub("T", "U", df$nt)
 df$nt = factor(df$nt, levels = c("G", "U", "A", "C"))
 
 # drop inputs (comment out next line if it empties the data)
-df = df %>% filter(!str_detect(tolower(ID), "input"))
+#df = df %>% filter(!str_detect(tolower(ID), "input"))
 
 # if empty after filtering, exit cleanly (avoids facet error)
 if (nrow(df) == 0) {

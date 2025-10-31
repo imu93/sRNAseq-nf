@@ -190,7 +190,7 @@ SRCPATH=/path/to/sRNAseq-nf
 cd $SRCPATH/example/
 tar xvf  fastq_test.tar.gz
 cd fastq
-for f in *.zst; do zstd -d "$f"; rm -rf *.zst ; done
+for f in *.zst; do zstd -d "$f"; rm -rf $f ; done
 for f in *.fastq; do pigz $f;done
 cd ..
 cd ..

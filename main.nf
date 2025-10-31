@@ -325,7 +325,7 @@ process summarize_uwm {
 
 
 process bam2Rds {
-    tag bam2Rds
+    tag "bam2Rds"
     input:
     path bam2Rds_script
     path bam_files

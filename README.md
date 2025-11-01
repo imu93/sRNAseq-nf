@@ -9,13 +9,34 @@ A reproducible *Nextflow* pipeline for small RNA-seq that collapses identical re
 ---
 
 ## Features
-- **Identical read collapse**: speed up alignment process for high-sequencing depth
-- **siRmap (UWM)**: probabilistic placement of multi-mapping reads using unique-read context (inspired in ShortStack -u mode)
-- **Optional 5′-nt gating** (`--first_nt`) with strand awareness: keep reads whose **original 5′ base as sequenced** is in a set (e.g., `G` or `AT`). Control whether filtered BAMs drive quant/DEA via `--apply_first_nt_downstream`
-- **Feature quantification** with **Rsubread/featureCounts** against a user-supplied, double-stranded GFF3
-- **DEA for IP vs Input**: custom **feature–anchored scaling** (trimmed, stable subset) + **edgeR `glmTreat`** (minimum effect size)
-- **Tracks**: CPM-scaled **bedGraphs** normalized by **mapped** reads, with minus-strand negated
-- **Plots**: MDS/MA panels, class-focused views, and first-nt distributions
+
+- **Identical-read collapse (C module)**  
+  Native **C implementation** for collapsing identical sRNA reads before alignment, drastically improving **speed** and **reducing memory load** at high sequencing depth.
+
+- **Pre-processing with Fastp**  
+  Integrated *_fastp_* for adapter trimming, quality filtering, and base correction, delivering **cleaner input data** and **faster pre-alignment quality control**.
+
+- **Enhanced siRmap (UWM++)**  
+  Upgraded multi-mapping resolution pipeline using *_NumPy_* arrays and accelerated with *_Numba_*, enabling efficient **probabilistic placement** of multi-mapping reads through unique-read context (inspired by *_ShortStack_* `-u` mode).
+
+- **Optional 5′-nt gating (`--first_nt`)**  
+  **Strand-aware filtering** of reads whose original 5′ base (as sequenced) belongs to a user-defined set (e.g., **G** or **A/T**).  
+  The **`--apply_first_nt_downstream`** flag controls whether filtered BAMs are propagated to quantification and DEA.
+
+- **Feature quantification**  
+  Performed via *_Rsubread/featureCounts_* using a user-supplied, **double-stranded GFF3 annotation** file.
+
+- **Differential expression analysis (IP vs Input)**  
+  Uses a **custom, feature-anchored scaling strategy** (trimmed stable subset) together with *_edgeR glmTreat_* for **minimum-effect-size testing**.
+
+- **Visualization and reporting**  
+  Generates **CPM-scaled bedGraphs** (with minus strand negated), along with **MDS**, **MA**, and **first-nt distribution** plots plus class-focused summaries.
+
+- **Nextflow profiles**  
+  Two new runtime environments for flexible deployment:  
+  - **`local`**: optimized for single-machine or laptop runs.  
+  - **`hpc`**: pre-configured for **SLURM/SGE clusters**, supporting **scalable parallel execution**.
+
 ---
 
 ## Installation

@@ -135,60 +135,87 @@ Ce_L4_Ip_wago4-Ce_L4_input_wago4	wago4	input	Ce_L4_input_wago4_2	2	1	0.05
 
 ## Configuration (`params.config`)
 The params.config contains all the requested parameters for sRNAseq-nf
-```groovy
-params {
-  reads       = "/path/to/fastq/*.fastq.gz"
-  threads     = 4
-  adapter     = "AGATCGGAAGAG"
-  minlen      = 18
-  maxlen      = 27
-  genome      = "/path/to/genome.fa"
-  annotation  = "/path/to/annotation.gff3"
-  offrate_sm  = 4       
-  thr_sm      = 12      
-  smem_sm     = "12G"   
-  assign_mode = 'uwm'
-  wins_sm     = 200  
-  minoverlap  = 0.7
-  contrast    = "/home/isaac/storage/Data/CELE_ANN/sirmap/contrast.txt"
-  treshold_inc = false
-  lfc         = 2
-  fdr         = 0.01
-  hk_norm     = true
-  norm_feature = "miRNA_S"
-  stringent_tmm = false
-  first_nt    = "T"
-  apply_first_nt_downstream = true
-
-}
 ```
+// nextflow.config
 
-| Param                       | Type                | Example / Default                                                                 | What it controls                                                                                               |
-|----------------------------|---------------------|------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------|
-| `reads`                    | string (glob)       | `/home/user/.../fastq/*.fastq.gz`                                                  | Input FASTQ files (gz allowed). Glob is expanded by Nextflow.                                                 |
-| `threads`                  | int                 | `4`                                                                                | Default CPU threads for mapping/IO steps (Bowtie, samtools, etc.).                                            |
-| `adapter`                  | string (DNA)        | `AGATCGGAAGAG`                                                                     | 3′ adapter sequence for trimming (e.g., Illumina TruSeq).                                                     |
-| `minlen`                   | int                 | `18`                                                                               | Minimum read length (after trimming) kept for analysis.                                                       |
-| `maxlen`                   | int                 | `27`                                                                               | Maximum read length (after trimming) kept for analysis.                                                       |
-| `genome`                   | path                | `/home/user/.../genomic.fa`                                                        | Reference genome FASTA used to build/point Bowtie index.                                                      |
-| `annotation`               | path                | `/home/user/.../overlapping_annotation.gff3`                                       | GFF3 with sRNA feature annotations used for counting/reporting.                                               |
-| `offrate_sm`               | int                 | `4`                                                                                | Bowtie **index** offrate (sampling rate). Lower = bigger index, faster align; higher = smaller index, slower. |
-| `thr_sm`                   | int                 | `12`                                                                               | Threads for mapping/sorting steps in the small-RNA mapping stage.                                             |
-| `smem_sm`                  | string (size)       | `12G`                                                                              | Samtools sort memory **per thread** (e.g., `2G`, `8G`, `1200M`) during mapping stage.                         |
-| `assign_mode`              | string (enum)       | `uwm`                                                                              | Multimapper resolution: `uwm` = Unique-Weighted Mode; `random` = uniform random placement.                    |
-| `wins_sm`                  | int (nt)            | `200`                                                                              | Window size (nt) for UWM scoring around each candidate alignment (strand-aware).                              |
-| `minoverlap`               | float (0–1)         | `0.7`                                                                              | Minimum fractional overlap of a read with a feature to count it.                                              |
-| `contrast`                 | path                | `/home/user/.../contrast.txt`                                                      | edgeR contrast/design file for IP vs Input (groups/comparisons).                                              |
-| `treshold_inc`             | bool                | `false`                                                                            | If `true` the DEA module will look for FDR and FC values on the contrast file (FC and FDR columns)
-| `lfc`                      | number              | `2`                                                                                | edgeR reporting threshold for log2 fold-change (e.g., highlight \|log2FC\| ≥ 2).                              |
-| `fdr`                      | float (0–1)         | `0.01`                                                                             | edgeR multiple-testing cutoff (Benjamini–Hochberg FDR).                                                       |
-| `hk_norm`                  | bool                | `true`                                                                             | Use housekeeping/category-anchored normalization instead of only library-size/TMM.                            |
-| `norm_feature`             | string              | `miRNA_S`                                                                          | Feature/category used as normalization anchor when `hk_norm=true` (e.g., mature miRNAs).                      |
-| `stringent_tmm`            | bool                | `false`                                                                            | Toggle stricter TMM behavior; if `true`, more aggressive outlier trimming.                                    |
-| `first_nt`                 | string (A/C/G/T/U)  | `T`                                                                                | First-nucleotide filter (e.g., keep reads whose first base is `T`).                                           |
-| `apply_first_nt_downstream`| bool                | `true`                                                                             | If `true`, apply first-nt filtering to downstream counting/DE; if `false`, only report it.                   |
+// Prefer projectDir so paths work for everyone
+// ROOT should be the path of the project
+def ROOT = "${projectDir}"
 
-> User must define absolute paths.
+params {
+  // GENERAL INPUTS
+  reads       = "${ROOT}/example/fastq/*.fastq.gz"  // path to input FASTQ files
+  genome      = "${ROOT}/example/genome/caenorhabditis_elegans.PRJNA13758.WBPS19.genomic.fa"  // reference genome FASTA
+  annotation  = "${ROOT}/example/annotation/caenorhabditis_elegans.PRJNA13758.WBPS19.overlapping_annotation.gff3.gz" // annotation GFF3 (WBPS19)
+  contrast    = "${ROOT}/contrast.txt"  // contrast file for differential expression
+
+  // QC PARAMS
+  preproc             = 'fastp'    // 'fastp' or 'legacy' (legacy = cutadapt + fastqc)
+  fastp_use_adapter   = null       // Should fastp use a provided adapter or auto-detect? (null = auto; set true to force adapter)
+  threads             = 1          // threads for QC steps
+  adapter             = "AGATCGGAAGAG"  // 3' adapter sequence
+  minlen              = 18         // minimum read length
+  maxlen              = 27         // maximum read length
+  // If your code expects strings ('all'/'none'), set map_gate = 'all' or 'none' instead of boolean:
+  map_gate            = true       // wait for all FASTQs to finish preprocessing before mapping
+
+  // ALIGNMENT PARAMS
+  thr_sm              = 6          // threads for small RNA mapping
+  smem_sm             = "4G"       // memory for mapping and BAM processing
+  max_multimaps       = null       // max multimapping loci per read (null = report all)
+  offrate_sm          = 2          // smaller offrate = larger index, faster mapping
+  assign_mode         = 'uwm'      // 'uwm' (unique weighted mapping) or 'random'
+  wins_sm             = 250        // window size for UWM (ignored if assign_mode = 'random')
+
+  // POSTALIGNMENT
+  use_rds                     = false   // build GRanges objects and save as RDS
+  minoverlap                  = 0.7     // featureCounts minimum overlap fraction
+  consider_strand             = false   // consider strand when quantifying uniquely mapped reads in UWM
+  apply_first_nt_downstream   = true    // continue pipeline after first-nucleotide plot analysis
+  first_nt                    = ""      // filter by first nucleotide (e.g. "G"); empty string = no filter
+  make_bedgraph               = false   // create RPM-normalized, stranded bedGraph files
+
+  // DEA PARAMS
+  threshold_inc       = false    // threshold values included in contrast file
+  lfc                 = 1        // log2 fold-change threshold
+  fdr                 = 0.05     // FDR threshold
+  hk_norm             = true     // use "housekeeping" feature normalization
+  norm_feature        = "miRNA"  // feature used for housekeeping normalization
+  stringent_tmm       = false    // use stringent TMM (useful with enough replicates & many instances)
+}
+
+```
+| Param                        | Type                | Example / Default                                                                 | What it controls                                                                                               |
+|-------------------------------|---------------------|------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------|
+| `reads`                       | string (glob)       | `${projectDir}/example/fastq/*.fastq.gz`                                           | Input FASTQ files (gzipped allowed). The glob is expanded by Nextflow.                                        |
+| `genome`                      | path                | `${projectDir}/example/genome/caenorhabditis_elegans.PRJNA13758.WBPS19.genomic.fa` | Reference genome FASTA used to build the Bowtie index.                                                        |
+| `annotation`                  | path                | `${projectDir}/example/annotation/caenorhabditis_elegans.PRJNA13758.WBPS19.overlapping_annotation.gff3.gz` | GFF3 file containing sRNA feature annotations for quantification.                                             |
+| `contrast`                    | path                | `${projectDir}/contrast.txt`                                                       | edgeR contrast or design file specifying sample group comparisons.                                            |
+| `preproc`                     | string (enum)       | `fastp`                                                                            | Read preprocessing mode: `fastp` (modern) or `legacy` (cutadapt + fastqc).                                    |
+| `fastp_use_adapter`           | bool/null           | `null`                                                                             | If `true`, fastp uses the provided adapter sequence; if `null` or `false`, auto-detects adapters.             |
+| `adapter`                     | string (DNA)        | `AGATCGGAAGAG`                                                                     | 3′ adapter sequence to trim (e.g., Illumina TruSeq).                                                          |
+| `threads`                     | int                 | `1`                                                                                | Number of CPU threads for QC and light processing steps.                                                      |
+| `minlen`                      | int                 | `18`                                                                               | Minimum read length to keep after trimming.                                                                   |
+| `maxlen`                      | int                 | `27`                                                                               | Maximum read length to keep after trimming.                                                                   |
+| `map_gate`                    | bool/string         | `true`                                                                             | If `true` (or `'all'`), mapping waits for all FASTQs to finish preprocessing before starting. Improves resource handling on limited systems. |
+| `thr_sm`                      | int                 | `6`                                                                                | Threads for small RNA mapping and downstream BAM sorting.                                                     |
+| `smem_sm`                     | string (size)       | `"4G"`                                                                             | Samtools sort memory (e.g., `4G`, `1G`) per thread during mapping.                                            |
+| `offrate_sm`                  | int                 | `2`                                                                                | Bowtie index offrate (sampling rate). Lower = larger index, faster mapping.                                   |
+| `assign_mode`                 | string (enum)       | `uwm`                                                                              | Multimapper resolution: `uwm` = Unique Weighted Mapping; `random` = uniform random placement.                 |
+| `wins_sm`                     | int (nt)            | `250`                                                                              | Window size (nt) for Unique Weighted Mapping scoring around each candidate alignment.                         |
+| `max_multimaps`               | int/null            | `null`                                                                             | Maximum allowed multimapping loci per read (`null` = report all).                                             |
+| `use_rds`                     | bool                | `false`                                                                            | If `true`, build and store R `GRanges` objects (`.Rds`) for faster downstream analysis.                       |
+| `minoverlap`                  | float (0–1)         | `0.7`                                                                              | Minimum fractional overlap of a read with a feature to count it (featureCounts).                              |
+| `consider_strand`             | bool                | `false`                                                                            | If `true`, consider strand information during unique-weighted mapping quantification.                         |
+| `first_nt`                    | string (A/C/G/T/U)  | `""`                                                                               | Filter reads by first nucleotide (e.g., `"G"` or `"AT"`). Empty string disables filtering.                    |
+| `apply_first_nt_downstream`   | bool                | `true`                                                                             | If `true`, apply first-nt filtering to downstream quantification and DEA; if `false`, only generate plots.    |
+| `make_bedgraph`               | bool                | `false`                                                                            | If `true`, create RPM-normalized stranded bedGraph coverage files.                                            |
+| `threshold_inc`               | bool                | `false`                                                                            | If `true`, read logFC/FDR thresholds from the contrast file (columns `FC` and `FDR`).                         |
+| `lfc`                         | float               | `1`                                                                                | Log2 fold-change cutoff used in edgeR differential expression reporting.                                      |
+| `fdr`                         | float (0–1)         | `0.05`                                                                             | Benjamini–Hochberg false discovery rate threshold for significance in edgeR.                                  |
+| `hk_norm`                     | bool                | `true`                                                                             | Enable housekeeping-feature normalization instead of relying solely on TMM.                                   |
+| `norm_feature`                | string              | `"miRNA"`                                                                          | Feature category used for housekeeping normalization when `hk_norm=true`.                                     |
+| `stringent_tmm`               | bool                | `false`                                                                            | Use stricter TMM normalization (trims more outliers; useful with many replicates).                            |
 ---
 
 ## Verification test

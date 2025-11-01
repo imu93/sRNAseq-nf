@@ -373,6 +373,23 @@ Two parallel flows are produced:
 - **featureCounts ambiguity**: inspect `09.featureCounts/*featureCounts` summary. High `Unassigned_Ambiguity` suggests overlapping features—revisit the GFF3
 - **Zero anchors**: if trimmed `rRNA_S` sums are near zero in some samples, anchored factors can be unstable—fall back to standard TMM or broaden the anchor set
 
+### macOS (Apple Silicon) – conda/mamba env conflicts / missing `pullseq`
+
+On M1/M2/M3 Macs, forcing an Intel (`osx-64`) Conda env resolves Bioconductor–R conflicts and provides `pullseq` (which isn’t built for `osx-arm64`). Use:
+
+```bash
+conda create --platform osx-64 -n srnanf_env -c conda-forge -c bioconda -c defaults \
+  python=3.11 bowtie pigz bc cutadapt fastqc multiqc bedtools \
+  samtools pullseq gawk openjdk=17 nextflow nf-test pysam tqdm \
+  r-base=4.4 bioconductor-rsubread bioconductor-rtracklayer \
+  bioconductor-edger bioconductor-plyranges bioconductor-rsamtools \
+  r-pacman r-ggplot2 r-ggpubr r-dplyr r-purrr r-gplots r-optparse r-reshape r-reshape2 \
+  r-kableextra r-ggbreak r-stringr r-pals r-stringi r-scales r-tidyr r-tibble
+```
+
+
+
+
 ---
 
 ## Limitations

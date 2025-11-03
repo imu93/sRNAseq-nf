@@ -277,6 +277,8 @@ mkdir -p .nxf
 chmod -R 777 .nxf
 apptainer run -B $PWD:/work -B $PWD/.nxf:/root/.nextflow $SRCPATH/env/srnanf.sif run $SRCPATH/main.nf -c params.config -with-report -with-trace -with-timeline
 ```
+> Having issues with resource usage on a laptop or small workstation?
+> Use the -profile local preset.
 
 ## Example with apptainer (offline)
 Once installed you can use:

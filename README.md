@@ -177,7 +177,6 @@ params {
 | `first_nt`                 | string (A/C/G/T/U)  | `T`                                                                                | First-nucleotide filter (e.g., keep reads whose first base is `T`).                                           |
 | `apply_first_nt_downstream`| bool                | `true`                                                                             | If `true`, apply first-nt filtering to downstream counting/DE; if `false`, only report it.                   |
 
-> User must define absolute paths.
 ---
 
 ## Verification test
@@ -218,6 +217,9 @@ mkdir -p .nxf
 chmod -R 777 .nxf
 apptainer run -B $PWD:/work -B $PWD/.nxf:/root/.nextflow $SRCPATH/env/srnanf.sif run $SRCPATH/main.nf -c params.config -with-report -with-trace -with-timeline
 ```
+
+> Having issues with resource usage on a laptop or small workstation?
+> Use the -profile local preset (it was tested in using a laptop with 16 threads and 16 Gb of RAM)
 
 ## Example with apptainer (offline)
 Once installed you can use:

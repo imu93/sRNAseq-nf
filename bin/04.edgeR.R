@@ -84,8 +84,6 @@ outPath_6 = "figures/"
 lst_dirs = list(outPath_1, outPath_2, outPath_3, outPath_6)
 sapply(lst_dirs, dir.create, showWarnings = FALSE, recursive = TRUE)
 
-# Read table of contrast
-conds = read.table(cot_file, header = T)
 
 # Read table of contrast
 conds = read.table(cot_file, header = T)
@@ -180,6 +178,31 @@ ma_norm_lst = list()
 
 
 
+# This function will help to have more control on the contrast based on the order
+# column and the c_name of the contrast table
+# Also it will add support for contrast with "-" in the IDs 
+order_contrast_from_cname = function(design, tmp.tb) {
+  trim_last_token = function(x) sub("_[^_]+$", "", x)
+  grpA = unique(trim_last_token(tmp.tb$c_name[tmp.tb$order == 1]))
+  grpB = unique(trim_last_token(tmp.tb$c_name[tmp.tb$order == 2]))
+  if (grepl("-", grpA)) {
+    grpA =  str_replace(grpA,"-", ".")
+  }
+  if (grepl("-", grpB)) {
+    grpB =  str_replace(grpB,"-", ".")
+  }
+  comp = setNames(numeric(ncol(design)), colnames(design))
+  # Weight each side equally if multiple groups appear on a side
+  if (length(grpA)) comp[intersect(grpA, names(comp))] <-  1 / max(1, length(grpA))
+  if (length(grpB)) comp[intersect(grpB, names(comp))] <- -1 / max(1, length(grpB))
+  if (all(comp == 0)) {
+    stop("No matching design columns for groups derived from c_name. ",
+         "Check that design colnames == sub('_[^_]+$', '', c_name).",
+         call. = FALSE)
+  }
+  comp
+}
+
 for ( cont in names(conts)) {
   print(cont)
   contrast_id = cont
@@ -195,10 +218,14 @@ for ( cont in names(conts)) {
     libs = libs
   }
   # Read table and create groups 
-  counts = read.delim(countsFile)
+  counts = read.delim(countsFile, check.names = F)
   counts = counts[,grepl(libs, colnames(counts))]
-  colnames(counts) = sub("\\.trim.*", "", colnames(counts))
-  
+  colnames(counts) = sub("\\.collapsed.*", "", colnames(counts))
+  # As for the order_contrast_from_cname, some library names can have a "-"
+  # in the ID, I will add support by replacing the "-" by "."
+  if (grepl("-", colnames(counts)) %>% sum() > 0) {
+    colnames(counts) = str_replace( colnames(counts) ,"-", ".")
+  }
   groups = colnames(counts) %>%  sub("_[^_]*$", "", .) %>% factor()
   print(groups)
   ##################################################################################
@@ -220,9 +247,9 @@ for ( cont in names(conts)) {
   
   lab = function(x){
     x %>%
-      stringr::str_replace_all("_", " ") %>%
-      stringr::str_squish() %>%
-      stringr::str_to_title()
+      str_replace_all("_", " ") %>%
+      str_squish() %>%
+      str_to_title()
   }
   
   groups = dge$samples$group            
@@ -264,7 +291,13 @@ for ( cont in names(conts)) {
   #plotBCV(dge)
   # As expected, we have variance in low expressed regions and low in highly expressed 
   # Let's fit glm
-  ncont =  cont
+  # First order the contrast based on the design and use the order col of contrast file 
+  # to improve contrast specification
+  ncont = order_contrast_from_cname(design, tmp.tb)
+  ncont = rev(sort(ncont))
+  # set the contrast
+  ncont = paste0(names(ncont[1]),"-",names(ncont[2]))
+  # And fit the model
   fit = glmFit(dge,design = design, dispersion = dge$common.dispersion)
   contrast = makeContrasts(ncont,levels = design)
   cont_fc = l_lfc[cont]
@@ -472,9 +505,12 @@ for ( cont in names(conts)) {
   sumNormRNAs = colSums(normCounts)
   
   ##################################################################################
-  counts = read.delim(countsFile)
+  counts = read.delim(countsFile, check.names = F)
   counts = counts[,grepl(libs, colnames(counts))]
-  colnames(counts) = sub("\\.trim.*", "", colnames(counts))
+  colnames(counts) = sub("\\.collaps.*", "", colnames(counts))
+  if (grepl("-", colnames(counts)) %>% sum() > 0) {
+    colnames(counts) = str_replace( colnames(counts) ,"-", ".")
+  }
   groups = colnames(counts) %>%  sub("_[^_]*$", "", .) %>% factor()
   lib.size = colSums(counts)
   # How many reads do we have?

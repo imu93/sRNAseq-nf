@@ -58,7 +58,7 @@ params.minoverlap     = params.minoverlap     ?: 0.7
 params.contrast       = params.contrast       ?: "${launchDir}/contrast.txt"
 params.lfc            = params.lfc            ?: 1
 params.fdr            = params.fdr            ?: 0.05
-params.treshold_inc   = params.treshold_inc   ?: false   // read FC/FDR from contrast file?
+params.threshold_inc   = params.threshold_inc   ?: false   // read FC/FDR from contrast file?
 params.hk_norm	      = params.hk_norm        ?: false // boolean
 params.norm_feature   = params.norm_feature   ?: "rRNA_S"
 params.stringent_tmm  = params.stringent_tmm  ?: false   // boolean
@@ -684,12 +684,12 @@ process edgeR_dea {
     script:
     def STRICT = params.stringent_tmm ? 'TRUE' : 'FALSE'
     def HKNORM = params.hk_norm ? 'TRUE' : 'FALSE'
-    def TRESH  = params.treshold_inc ? 'TRUE' : 'FALSE' 
+    def TRESH  = params.threshold_inc ? 'TRUE' : 'FALSE' 
     """
     Rscript ${dea_script} \
       --counts_file ${counts_txt} \
       --contrast_file ${contrast_file} \
-      --treshold_inc ${TRESH} \
+      --threshold_inc ${TRESH} \
       --logfold_change ${params.lfc} \
       --fdr ${params.fdr} \
       --hk_norm ${HKNORM} \

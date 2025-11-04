@@ -8,7 +8,7 @@ option_list = list(
               help= "Path to featureCounts counts table", metavar="character"),
   make_option(c("-c", "--contrast_file"), type="character", default=1, 
               help= "Single row txt file specifying the contrast", metavar="character"),
-  make_option(c("-t", "--treshold_inc"), type="logical", default = FALSE,
+  make_option(c("-t", "--threshold_inc"), type="logical", default = FALSE,
               help = "For complex contrast files FC and FDR can be incleded as extra columns",
               metavar = "logical"),
   make_option(c("-l", "--logfold_change"), type="numeric", default=1, 
@@ -40,7 +40,7 @@ if (is.null(opt$fdr)){
   stop("At least one argument must be supplied for fdr", call.=FALSE)
 }
 
-tresh_c = as.logical(opt$treshold_inc)
+tresh_c = as.logical(opt$threshold_inc)
 if (tresh_c == TRUE) {
   print("-l and -f will be omited and the contrast file will be used")
 }

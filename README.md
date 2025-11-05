@@ -99,15 +99,7 @@ Or build their own sif from **env/srnaseq_nf.def**
 cd sRNAseq-nf/env/
 apptainer build ./srnaseq_nf.def ./srnaseq_nf.sif
 apptainer exec srnaseq_nf.sif nextflow -version
-mkdir -p .appt-home .nxf/framework/version .nxf-tmp .nextflow/plugins # version must be your nextflow version
-```
-
-Now to find the nf.jar
-```
-apptainer exec /home/isaac12/software/sRNAseq-nf/env/srnaseq_nf.sif   bash -lc 'command -v nextflow; \
-	find / -maxdepth 5 -type f -name "nextflow-*-one.jar" 2>/dev/null | head -n 20' # Just in case the version change 
-
-apptainer exec srnanf.sif bash -lc 'cat /root/.nextflow/framework/25.10.0/nextflow-25.10.0-one.jar' > .nxf/framework/25.04.7/nextflow-25.10.0-one.jar
+mkdir -p .appt-home .nxf/framework/version .nxf-tmp .nextflow/plugins
 ```
 
 > Alternatively the /env directory contains a yml file that can be used a source

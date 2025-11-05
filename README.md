@@ -10,31 +10,31 @@ A reproducible *Nextflow* pipeline for small RNA-seq that collapses identical re
 
 ## Features
 
-- **Identical-read collapse (C module)**  
+- **Identical-read collapse (C module)** 
   Native **C implementation** for collapsing identical sRNA reads before alignment, drastically improving **speed** and **reducing memory load** at high sequencing depth.
 
-- **Pre-processing with Fastp**  
+- **Pre-processing with Fastp** 
   Integrated *_fastp_* for adapter trimming, quality filtering, and base correction, delivering **cleaner input data** and **faster pre-alignment quality control**.
 
 - **Enhanced siRmap (UWM++)**  
   Upgraded multi-mapping resolution pipeline using *_NumPy_* arrays and accelerated with *_Numba_*, enabling efficient **probabilistic placement** of multi-mapping reads through unique-read context (inspired by *_ShortStack_* `-u` mode).
 
-- **Optional 5′-nt gating (`--first_nt`)**  
+- **Optional 5′-nt gating (`--first_nt`)**
   **Strand-aware filtering** of reads whose original 5′ base (as sequenced) belongs to a user-defined set (e.g., **G** or **A/T**).  
   The **`--apply_first_nt_downstream`** flag controls whether filtered BAMs are propagated to quantification and DEA.
 
-- **Feature quantification**  
+- **Feature quantification** 
   Performed via *_Rsubread/featureCounts_* using a user-supplied, **double-stranded GFF3 annotation** file.
 
-- **Differential expression analysis (IP vs Input)**  
+- **Differential expression analysis (IP vs Input)** 
   Uses a **custom, feature-anchored scaling strategy** (trimmed stable subset) together with *_edgeR glmTreat_* for **minimum-effect-size testing**.
 
-- **Visualization and reporting**  
+- **Visualization and reporting** 
   Generates **CPM-scaled bedGraphs** (with minus strand negated), along with **MDS**, **MA**, and **first-nt distribution** plots plus class-focused summaries.
 
 - **Nextflow profiles**  
-  Two new runtime environments for flexible deployment:  
-  - **`local`**: optimized for single-machine or laptop runs.  
+  Two new runtime environments for flexible deployment: 
+  - **`local`**: optimized for single-machine or laptop runs. 
   - **`hpc`**: pre-configured for **SLURM/SGE clusters**, supporting **scalable parallel execution**.
 
 ---
@@ -83,27 +83,33 @@ cd ..
 > Note: the next version of sRNAseq-nf will include this out of the box
 ---
 ### HPC considerations
-In case conda/mamba is not accessible an apptainer .def file is distributed in this repository **sRNAseq-nf/env/**. 
+In case conda/mamba is not accessible an apptainer sif image can also be used. 
 For apptainer installation take a look at:
 
 ```
 https://apptainer.org/docs/admin/main/installation.html
 ```
-Once apptainer is installed, it is time to build the container. 
+Once apptainer is installed, users can either pull directly the sif file using:
+```
+apptainer pull oras://ghcr.io/imu93/srnaseq-nf:0.1.0-beta
+```
+
+Or build their own sif from **env/srnaseq_nf.def**
 ```
 cd sRNAseq-nf/env/
-apptainer build ./srnanf.sif ./srnanf.def
-apptainer exec srnanf.sif nextflow -version
+apptainer build ./srnaseq_nf.def ./srnaseq_nf.sif
+apptainer exec srnaseq_nf.sif nextflow -version
 mkdir -p .appt-home .nxf/framework/version .nxf-tmp .nextflow/plugins # version must be your nextflow version
 ```
 
 Now to find the nf.jar
 ```
-apptainer exec /home/isaac12/software/sRNAseq-nf/env/srnanf.sif   bash -lc 'command -v nextflow; \
+apptainer exec /home/isaac12/software/sRNAseq-nf/env/srnaseq_nf.sif   bash -lc 'command -v nextflow; \
 	find / -maxdepth 5 -type f -name "nextflow-*-one.jar" 2>/dev/null | head -n 20' # Just in case the version change 
 
-apptainer exec srnanf.sif bash -lc 'cat /root/.nextflow/framework/25.04.7/nextflow-25.04.7-one.jar' > .nxf/framework/25.04.7/nextflow-25.04.7-one.jar
+apptainer exec srnanf.sif bash -lc 'cat /root/.nextflow/framework/25.10.0/nextflow-25.10.0-one.jar' > .nxf/framework/25.04.7/nextflow-25.10.0-one.jar
 ```
+
 > Alternatively the /env directory contains a yml file that can be used a source
 
 Run with `-with-conda`

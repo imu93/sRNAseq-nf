@@ -12,7 +12,9 @@ From: continuumio/miniconda3:latest
     export LD_LIBRARY_PATH="$CONDA_DIR/envs/$CONDA_DEFAULT_ENV/lib:${LD_LIBRARY_PATH:-}"
     export LC_ALL=C.UTF-8
     export LANG=C.UTF-8
-    export HOME=/root
+    export NXF_HOME=${NXF_HOME:-/tmp/nextflow}
+    export _JAVA_OPTIONS="${_JAVA_OPTIONS:- -Djava.io.tmpdir=/tmp }"
+    export NXF_TEMP=${NXF_TEMP:-/tmp}
 
 %setup
     if [ -n "${APPTAINER_BUILD_SOURCE:-}" ] && [ -d "${APPTAINER_BUILD_SOURCE:-}" ]; then DEF_DIR="${APPTAINER_BUILD_SOURCE}"; else DEF_DIR="$(pwd)"; fi
@@ -62,6 +64,9 @@ BASH
 
 %test
     
+    export NXF_HOME=/tmp/nextflow && mkdir -p "$NXF_HOME"
+    nextflow -version
+     
     for tool in collapse fastqc fastp bedtools samtools cutadapt bowtie multiqc nextflow; do
         command -v "$tool" >/dev/null 2>&1 || { echo "Missing $tool"; exit 1; }
     done

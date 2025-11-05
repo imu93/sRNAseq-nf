@@ -99,7 +99,6 @@ Or build their own sif from **env/srnaseq_nf.def**
 cd sRNAseq-nf/env/
 apptainer build ./srnaseq_nf.def ./srnaseq_nf.sif
 apptainer exec srnaseq_nf.sif nextflow -version
-mkdir -p .appt-home .nxf/framework/version .nxf-tmp .nextflow/plugins
 ```
 
 > Alternatively the /env directory contains a yml file that can be used a source
@@ -273,7 +272,7 @@ nextflow run main.nf -c params.config -with-report -with-trace -with-timeline -w
 SRCPATH=/path/to/sRNAseq-nf
 mkdir -p .nxf
 chmod -R 777 .nxf
-apptainer run -B $PWD:/work -B $PWD/.nxf:/root/.nextflow $SRCPATH/env/srnanf.sif run $SRCPATH/main.nf -c params.config -with-report -with-trace -with-timeline
+apptainer run -B $PWD:/work $SRCPATH/env/srnaseq-nf.sif $SRCPATH/main.nf -c params.config -with-report -with-trace -with-timeline
 ```
 > Having issues with resource usage on a laptop or small workstation?
 > Use the -profile local preset.
@@ -281,25 +280,24 @@ apptainer run -B $PWD:/work -B $PWD/.nxf:/root/.nextflow $SRCPATH/env/srnanf.sif
 ## Example with apptainer (offline)
 Once installed you can use:
 ```
+SIFPATH=/path/to/sif
 SRCPATH=/path/to/sRNAseq-nf
-CACHE=$SRCPATH/env/.nxf
-PLUGINS=$SRCPATH/env/.nextflow/plugins
-
+mkdir -p "$PWD/.nextflow"
 apptainer exec \
-  --home $SRCPATH/.appt-home \
-  -B $SRCPATH:$SRCPATH \
-  -B $CACHE:/opt/.nxf \
-  -B $PLUGINS:/opt/.nextflow/plugins \
   -B $PWD:$PWD \
-  $SRCPATH/env/srnanf.sif \
-  bash -lc "export NXF_HOME=/opt/.nxf
-            export NXF_PLUGINS_DIR=/opt/.nextflow/plugins
-            export NXF_OFFLINE=true
-            nextflow run $SRCPATH/main.nf -c $PWD/params.config"
-
+  -B "$SRCPATH":"$SRCPATH" \
+  --env NXF_HOME="$PWD/.nextflow" \
+  --env NXF_DISABLE_CHECK_LATEST=true \
+  --env NXF_OFFLINE=true \
+  $SIFPATH/srnaseq-nf.sif \
+            nextflow run $SRCPATH/main.nf \
+                     -c $PWD/params.config -with-timeline
 ```
-This is assuming **params.config** on $PWD
+> This is assuming **params.config** on $PWD
+
+
 ---
+
 
 ![Workflow DAG](docs/nfpl.jpg)
 

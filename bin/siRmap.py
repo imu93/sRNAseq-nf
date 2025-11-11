@@ -878,12 +878,11 @@ def _clear_secondary_and_supplementary(aln: pysam.AlignedSegment):
     # Make sure it's marked as mapped
     aln.flag &= ~0x4
 
-def _expand_write(read: pysam.AlignedSegment, out_bam: pysam.AlignmentFile, rc: int,  zt_value: str | None = None):
+def _expand_write(read: pysam.AlignedSegment, out_bam: pysam.AlignmentFile, rc: int, zt_value: str | None = None):
     """
     Write 'rc' copies of aln to out_bam after sanitizing
     Each copy has NH=1 and RC=1 and no multimapper/supplementary tags
     """
-    # sanitize in-place (okay to mutate a temp object)
     _clear_secondary_and_supplementary(read)
     # add ZT tag whcih can be used to track unique/multimapper status
     # also I will use it to  track probabilities associated with UWM
@@ -893,11 +892,24 @@ def _expand_write(read: pysam.AlignedSegment, out_bam: pysam.AlignmentFile, rc: 
             read.set_tag("ZT", zt_value, value_type='Z')
         except Exception:
             pass
-          
     _sanitize_for_out_inplace(read)
-    for _ in range(int(rc)):
-        out_bam.write(read)
 
+    # build a short token from QNAME
+    orig_qname = read.query_name
+    # Use rea read info to build the token
+    raw = f"{orig_qname}|{read.reference_name}|{read.reference_start}|{read.reference_end}|{int(read.is_reverse)}"
+    token = hashlib.blake2b(raw.encode("utf-8"), digest_size=6).hexdigest()
+    # add the token to the original ID
+    # but try to keep the same length
+    extra = 1 + len(token)
+    if len(orig_qname) + extra > 254:
+        base = orig_qname[: 254 - extra]
+    else:
+        base = orig_qname
+    # fix ID
+    read.query_name = f"{base}_{token}"
+    # write the bam
+    out_bam.write(read)
 
 # Group alignments by query name to process multimappers together
 def _group_alignments_by_qname(in_bam_path: str):

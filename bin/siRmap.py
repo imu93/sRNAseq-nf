@@ -886,7 +886,6 @@ def _clear_secondary_and_supplementary(aln: pysam.AlignedSegment):
 
 
  
- 
 def _expand_write(read: pysam.AlignedSegment, out_bam: pysam.AlignmentFile, rc: int, zt_value: str | None = None):
     """
     Write 'rc' copies of aln to out_bam after sanitizing Each copy 
@@ -904,10 +903,10 @@ def _expand_write(read: pysam.AlignedSegment, out_bam: pysam.AlignmentFile, rc: 
             pass
     _sanitize_for_out_inplace(read)
 
-    # Sabe read names
+    # Save read names
     orig_qname = read.query_name
     total = int(rc)
-
+    # So now for each exapnded read assing a unique
     for i in range(1, total + 1):
         #  Use rea read info to build the token
         raw = f"{orig_qname}|{i}|{total}|{read.reference_name}|{read.reference_start}|{read.reference_end}|{int(read.is_reverse)}"
@@ -916,7 +915,7 @@ def _expand_write(read: pysam.AlignedSegment, out_bam: pysam.AlignmentFile, rc: 
         # but try to keep the same length
         extra = 1 + len(token)
         base = orig_qname if len(orig_qname) + extra <= 254 else orig_qname[:254 - extra]
-        # QNAME único por copia
+        # fix ID
         read.query_name = f"{base}_{token}"
         # Write the copy
         out_bam.write(read)

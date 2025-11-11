@@ -3,8 +3,8 @@
 # Code writen by: Isaac Martinez Ugalde PhD
 # Aim:
 # siRmap for sRNA alignment and multimapping placement
-# Last update: Oct 29-10-2025
-# This is the siRmap v1.0.3 module for mapping small RNA seq data
+# Last update: Oct 11-11-2025
+# This is the siRmap v1.0.3.1 module for mapping small RNA seq data
 # The biigest changes are the use of numba to speed up the UWM assignment
 
 
@@ -52,6 +52,12 @@
 #  chrom names are kept as object dtype but consider producing a chrom-code (np.int32)
 #  and using that for sorting/lexsort to speed operations and reduce memory
 # In case I need more info: https://numpy.org/doc/stable/user/basics.types.html
+
+
+# 11-11-2025
+# Minor update I have extended _expand_write function to have unique read IDs after 
+# expand the reads
+
 
 import shutil
 import os

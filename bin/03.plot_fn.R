@@ -77,20 +77,52 @@ names(colors) = c("G", "U", "A", "C") # This line is not relevant but I'll keep 
 tick_lengths = as.character(seq(min_length, max_length, 2))
 tick_lengths = intersect(tick_lengths, levels(df$length))
 
+# number of conditions
+n_panels = length(unique(df$ID))
+
+# choose ncol so that the facet grid is roughly square
+ncol_facets = ceiling(sqrt(n_panels))
+nrow_facets = ceiling(n_panels / ncol_facets)
+
+# length span for x axis
+len_span = max_length - min_length + 1
+
+# per-panel dimensions (inches)
+# base width grows with length span so long x-axes get more room
+panel_width  <- 2.5 + len_span * 0.06   
+panel_height <- 4 
+
+# Figure size
+plot_width  = panel_width  * ncol_facets
+plot_height = panel_height * nrow_facets
+
+
 # Fn plots
 # By percentage
-percetage_plot = df %>% ggplot(aes(x=length, y=percentage, fill=nt)) +
-  geom_bar(stat="identity") + facet_wrap(~ID) +
-  scale_fill_manual(values = colors, name= "5' nt") +
-  theme_test() + ylab("% of reads") + xlab("Length") +
-  theme(axis.text=element_text(size=18),
-        axis.title=element_text(size=18), 
-        legend.position = "bottom",
-        legend.text = element_text(size=14),
-        strip.text = element_text(size=18), 
-        plot.margin = unit(c(0.5, 0.5, 0.5, 0.5), 
-                           "inches")) +
+percetage_plot =df %>% 
+  ggplot(aes(x = length, y = percentage, fill = nt)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~ ID, ncol = ncol_facets) +
+  scale_fill_manual(values = colors, name = "5' nt") +
+  theme_test() + 
+  ylab("% of reads") + 
+  xlab("Length") +
+  theme(
+    axis.text  = element_text(size = 12),
+    axis.title = element_text(size = 16), 
+    legend.position = "bottom",
+    legend.text = element_text(size = 14),
+    strip.text = element_text(size = 18), 
+    plot.margin = unit(c(0.5, 0.5, 0.5, 0.5), "inches")
+  ) +
   scale_x_discrete(breaks = tick_lengths)
 
-ggsave("length_dit_fn_percentage.png", device = "png", width = 5, height =  5,
-       path = "./", plot = percetage_plot, dpi = 300)
+ggsave(
+  "length_dit_fn_percentage.png",
+  device = "png",
+  path = "./",
+  plot = percetage_plot,
+  width = plot_width,
+  height = plot_height,
+  dpi = 300
+)

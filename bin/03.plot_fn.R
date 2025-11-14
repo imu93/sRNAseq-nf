@@ -1,5 +1,3 @@
-# This is script must be polished since I'm just looking for 
-# reads in a range of 18-27
 pacman::p_load(ggplot2, dplyr, stringr, reshape2, tidyr, tibble, purrr)
 args = commandArgs(trailingOnly = TRUE)
 min_length = as.integer(args[1])
@@ -52,8 +50,6 @@ df = all_df %>%
     .groups = "drop"
   )
 
-min_length = 18
-max_length = 27
 # keep requested length range first, then format
 df = df %>% filter(length >= min_length, length <= max_length)
 

@@ -1,4 +1,3 @@
-setwd("~/storage/Data/CELE_ANN/BENCHMARK/sRNAseq_nf/Results_20251030_124414/06.resolved_random")
 pacman::p_load(ggplot2, pals, scales, ggpubr)
 logs = list.files(pattern = ".*.log")
 files = lapply(logs, readLines)
@@ -29,7 +28,7 @@ df2plot$Class = factor(df2plot$Class,
                        levels = rev(c("Unique", "Multimappers")))
 
 color = rev(c("#33B7A0", "#1283D4"))
-df2plot$exp = "Numebr of aligned reads"
+df2plot$exp = "Number of aligned reads"
 p1 = ggplot(df2plot, aes(Counts, ID, fill = Class)) + 
   geom_bar(stat = "identity") +
   theme_test() +  xlab("Number of reads") + ylab("Sample ID") +

@@ -299,7 +299,7 @@ apptainer exec \
 ---
 
 
-![Workflow DAG](docs/nfpl.jpg)
+![Workflow DAG](docs/sRNAseq-nf_2.jpg)
 
 ## Outputs
 

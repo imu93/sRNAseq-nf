@@ -433,7 +433,7 @@ process resolve_uwm {
     --out-bam "\${SAMPLE}.expanded.bam" \
     --threads ${params.thr_sm} \
     --sort-mem ${params.smem_sm} \
-    --seed 123 ${ params.consider_strand ? '--consider-strand' : '' } 
+    --seed 123 ${ params.consider_strand ? '--strand' : '' } 
   """
 }
 

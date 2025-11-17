@@ -234,7 +234,7 @@ for ( cont in names(conts)) {
   round((lib.size)/1e6, 2)
   # Create DGE and filter by expression
   dge = DGEList(counts=counts, group=groups, lib.size = lib.size)
-  keep = filterByExpr(dge, min.count= 10)
+  keep = filterByExpr(dge, min.count= 5)
   dge = dge[keep, , keep.lib.sizes=FALSE]
   print(table(keep))
   f.exp.counts = colSums(dge$counts)
@@ -403,7 +403,7 @@ for ( cont in names(conts)) {
   # that are not expected to be enriched in IPs and thus serve as a more stable reference for scaling.
   
   get_trimmed_category_counts = function(dge_full, category_pattern = "^rRNA_S", groups, 
-                                         min_count = 10, logratioTrim = 0.3, sumTrim = 0.05,
+                                         min_count = 5, logratioTrim = 0.3, sumTrim = 0.05,
                                          stringent = FALSE, use_all_category = FALSE) {
     
     # 1. Get the rows corresponding to the category of interest
@@ -517,7 +517,7 @@ for ( cont in names(conts)) {
   round((lib.size)/1e6, 2)
   # Create DGE and filter by expression
   dge = DGEList(counts=counts, group=groups, lib.size = lib.size)
-  keep = filterByExpr(dge, min.count= 10)
+  keep = filterByExpr(dge, min.count= 5)
   dge = dge[keep, , keep.lib.sizes=FALSE]
   print(table(keep))
   

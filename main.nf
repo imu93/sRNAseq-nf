@@ -265,10 +265,10 @@ process pullseq {
   label 'preproc'
 
   input:
-    path read
+    tuple path(read), path(rc_map)
 
   output:
-    path "*ps.fastq.gz", emit: fastq
+    tuple path("*ps.fastq.gz"), path(rc_map), emit: fastq_map
 
   tag "${read.simpleName}"
   publishDir "${results_dir}/04.pullseq", mode: 'copy'
@@ -315,11 +315,10 @@ process map_collapse {
   memory params.smem_sm
 
   input:
-    path fastq
+    tuple path(fastq), path(rc_map_tsv)
     path genome
     path siRmap_script
-    path bowtie_idx
-    path rc_map_tsv         
+    path bowtie_idx         
 
   output:
     path "*.collapsed.bam",               emit: collapsed_bam
@@ -343,6 +342,7 @@ process map_collapse {
   BASENAME=\${BASENAME%.fastq}
   BASENAME=\${BASENAME%.fq}
   BASENAME=\${BASENAME%.collapsed}  
+  BASENAME=\${BASENAME%.ps}  
 
   python ${siRmap_script} bowtie-aln \
     --fastq ${fastq} \
@@ -698,20 +698,27 @@ process edgeR_dea {
     """
 }
 
+workflow {  
 
-workflow {
-  
-  def map_tsv_ch
   def map_inputs_ch
-
   if ( params.preproc == 'fastp' ) {
-    
+   
     fp_out = fastp(reads_ch)
     multiqc_fastp( fp_out.qc_json.collect() )
 
     def collapsed = collapse(fp_out.fastq, collapse_script_ch)
-    map_inputs_ch = collapsed.collapsed_fq
-    map_tsv_ch    = collapsed.map_tsv
+
+    def fq_join = collapsed.collapsed_fq.map { fq ->
+      def id = fq.simpleName.replace('.collapsed.fastq','')
+      tuple(id, fq)
+    }
+
+    def map_join = collapsed.map_tsv.map { m ->
+      def id = m.simpleName.replace('.map.tsv','')
+      tuple(id, m)
+    }
+
+    map_inputs_ch = fq_join.join(map_join).map { sid, fq, m -> tuple(fq, m) }
 
   } else {
    
@@ -723,32 +730,41 @@ workflow {
     multiqc_tr( fastqc_tr.qc_zip.collect() )
 
     def collapsed  = collapse(trimmed, collapse_script_ch)
-    def collapse_fq = collapsed.collapsed_fq
-    map_tsv_ch     = collapsed.map_tsv
 
-    def pulled = pullseq(collapse_fq)
-    map_inputs_ch = pulled.fastq
+    def fq_join = collapsed.collapsed_fq.map { fq ->
+      def id = fq.simpleName.replace('.collapsed.fastq','')
+      tuple(id, fq)
+    }
+
+    def map_join = collapsed.map_tsv.map { m ->
+      def id = m.simpleName.replace('.map.tsv','')
+      tuple(id, m)
+    }
+
+    def collapsed_pairs = fq_join.join(map_join).map { sid, fq, m -> tuple(fq, m) }
+
+    def pulled = pullseq(collapsed_pairs)
+    map_inputs_ch = pulled.fastq_map
   }
 
   // ----- mapping gate applied to the unified channel -----
-  def fastq_for_map
+  def fastq_map_for_map
   if( params.map_gate == 'all' ) {
     def all_done = map_inputs_ch.collect().map { true }
-    fastq_for_map = map_inputs_ch
+    fastq_map_for_map = map_inputs_ch
                       .combine(all_done)
-                      .map { fq, _ -> fq }
+                      .map { pair, _ -> pair }
   } else {
-    fastq_for_map = map_inputs_ch
+    fastq_map_for_map = map_inputs_ch
   }
 
   idx = build_index(siRmap_script_ch, genome_ch)
 
   mapped = map_collapse(
-            fastq_for_map,
+            fastq_map_for_map,
             genome_ch,
             siRmap_script_ch,
-            idx.ebwt.collect(),
-            map_tsv_ch
+            idx.ebwt.collect()
           )
 
   resolved_bams_ch = Channel.empty()

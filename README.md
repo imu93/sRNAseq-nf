@@ -16,11 +16,11 @@ A reproducible *Nextflow* pipeline for small RNA-seq that collapses identical re
 - **Pre-processing with Fastp** 
   Integrated *_fastp_* for adapter trimming, quality filtering, and base correction, delivering **cleaner input data** and **faster pre-alignment quality control**.
 
-- **Enhanced siRmap (UWM++)**  
+- **Enhanced siRmap (UWM++)**
   Upgraded multi-mapping resolution pipeline using *_NumPy_* arrays and accelerated with *_Numba_*, enabling efficient **probabilistic placement** of multi-mapping reads through unique-read context (inspired by *_ShortStack_* `-u` mode).
 
 - **Optional 5′-nt gating (`--first_nt`)**
-  **Strand-aware filtering** of reads whose original 5′ base (as sequenced) belongs to a user-defined set (e.g., **G** or **A/T**).  
+  **Strand-aware filtering** of reads whose original 5′ base (as sequenced) belongs to a user-defined set (e.g., **G** or **A/T**)
   The **`--apply_first_nt_downstream`** flag controls whether filtered BAMs are propagated to quantification and DEA.
 
 - **Feature quantification** 
@@ -32,10 +32,13 @@ A reproducible *Nextflow* pipeline for small RNA-seq that collapses identical re
 - **Visualization and reporting** 
   Generates **CPM-scaled bedGraphs** (with minus strand negated), along with **MDS**, **MA**, and **first-nt distribution** plots plus class-focused summaries.
 
-- **Nextflow profiles**  
+- **Nextflow profiles**
   Two new runtime environments for flexible deployment: 
   - **`local`**: optimized for single-machine or laptop runs. 
   - **`hpc`**: pre-configured for **SLURM/SGE clusters**, supporting **scalable parallel execution**.
+
+- **siRmap**
+ Now integrates the expand-fq function to expand unmapped fastq files based on RC map tsv files (siRmap v1.0.3.2)
 
 ---
 
@@ -169,7 +172,7 @@ params {
 
   // QC PARAMS
   preproc             = 'fastp'    // 'fastp' or 'legacy' (legacy = cutadapt + fastqc)
-  fastp_use_adapter   = null       // Should fastp use a provided adapter or auto-detect? (null = auto; set true to force adapter)
+  fastp_use_adapter   = true       // Should fastp use a provided adapter or auto-detect? (null = auto; set true to force adapter)
   threads             = 1          // threads for QC steps
   adapter             = "AGATCGGAAGAG"  // 3' adapter sequence
   minlen              = 18         // minimum read length
@@ -184,7 +187,7 @@ params {
   offrate_sm          = 2          // smaller offrate = larger index, faster mapping
   assign_mode         = 'uwm'      // 'uwm' (unique weighted mapping) or 'random'
   wins_sm             = 250        // window size for UWM (ignored if assign_mode = 'random')
-
+  expand_unmapped     = false	   // Expand unmapped reads by RC map (default = false)
   // POSTALIGNMENT
   use_rds                     = false   // build GRanges objects and save as RDS
   minoverlap                  = 0.7     // featureCounts minimum overlap fraction
@@ -198,7 +201,7 @@ params {
   lfc                 = 1        // log2 fold-change threshold
   fdr                 = 0.05     // FDR threshold
   hk_norm             = true     // use "housekeeping" feature normalization
-  norm_feature        = "miRNA"  // feature used for housekeeping normalization
+  norm_feature        = "miRNA_S"  // feature used for housekeeping normalization
   stringent_tmm       = false    // use stringent TMM (useful with enough replicates & many instances)
 }
 
@@ -227,13 +230,15 @@ params {
 | `consider_strand`             | bool                | `false`                                                                            | If `true`, consider strand information during unique-weighted mapping quantification.                         |
 | `first_nt`                    | string (A/C/G/T/U)  | `""`                                                                               | Filter reads by first nucleotide (e.g., `"G"` or `"AT"`). Empty string disables filtering.                    |
 | `apply_first_nt_downstream`   | bool                | `true`                                                                             | If `true`, apply first-nt filtering to downstream quantification and DEA; if `false`, only generate plots.    |
-| `make_bedgraph`               | bool                | `false`                                                                            | If `true`, create RPM-normalized stranded bedGraph coverage files.                                            |
+| `make_bedgraph`               | bool                | `false`                                                                            | If `true`, create RPM-normalized stranded bedGraph coverage files                                            |
 | `threshold_inc`               | bool                | `false`                                                                            | If `true`, read logFC/FDR thresholds from the contrast file (columns `FC` and `FDR`).                         |
 | `lfc`                         | float               | `1`                                                                                | Log2 fold-change cutoff used in edgeR differential expression reporting.                                      |
 | `fdr`                         | float (0–1)         | `0.05`                                                                             | Benjamini–Hochberg false discovery rate threshold for significance in edgeR.                                  |
 | `hk_norm`                     | bool                | `true`                                                                             | Enable housekeeping-feature normalization instead of relying solely on TMM.                                   |
 | `norm_feature`                | string              | `"miRNA"`                                                                          | Feature category used for housekeeping normalization when `hk_norm=true`.                                     |
 | `stringent_tmm`               | bool                | `false`                                                                            | Use stricter TMM normalization (trims more outliers; useful with many replicates).                            |
+| `expand_unmapped`		| bool		      | `false`										   | Expand unmapped FASTQ files based in RC map (.tsv files)	|
+| `n_mismatch`			| int		      | `int`										   | Maximum nuber of mismatches allowed in bowtie alignment	|
 ---
 
 ## Verification test

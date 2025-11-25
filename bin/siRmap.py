@@ -3,8 +3,8 @@
 # Code writen by: Isaac Martinez Ugalde PhD
 # Aim:
 # siRmap for sRNA alignment and multimapping placement
-# Last update: Oct 11-11-2025
-# This is the siRmap v1.0.3.1 module for mapping small RNA seq data
+# Last update: 24-11-2025
+# This is the siRmap v1.0.3.2 module for mapping small RNA seq data
 # The biigest changes are the use of numba to speed up the UWM assignment
 
 
@@ -57,6 +57,13 @@
 # 11-11-2025
 # Minor update I have extended _expand_write function to have unique read IDs after 
 # expand the reads
+
+# 24-11-2025
+# I have added a new feature to siRmap in this new versionI added the function : expand_fastq_with_map
+# This will be call as a sepaarate function siRmap.py expand-fq. The idea is that this will help to expand
+# fastq files of unmapped reads based on the RC file
+# I have also improve the use of usrorted bams after random and uwm modes
+
 
 
 import shutil
@@ -405,6 +412,93 @@ def run_bowtie(
         sf.write("\n")
 
     print(f"Mapping summary saved: {summary_log_file}\n")
+    
+# Small heleper to open the gz files   
+def _open_text_auto(path, mode="rt"):
+    if path.endswith(".gz"):
+        return gzip.open(path, mode)
+    return open(path, mode)
+
+# EXPAND UNPAED FASTQ
+def expand_fastq_with_map(
+    collapsed_fastq: str,
+    rc_map_path: str,
+    output_fastq: str,
+    add_suffix: bool = True,
+):
+    """
+    Expand a collapsed FASTQ using an RC map (.tsv or .tsv.gz)
+    Each collapsed read is written RC times
+    """
+    # I'll start with a brief summary
+    print(f"\nExpanding FASTQ:")
+    print(f"  input: {collapsed_fastq}")
+    print(f"  rc_map: {rc_map_path}")
+    print(f"  output: {output_fastq}\n")
+
+    # Load RC map
+    rc_map = _load_rc_map(rc_map_path)
+    if rc_map is None:
+        raise ValueError("RC map could not be loaded. Provide a valid .tsv(.gz) file.")
+
+    total_reads = 0        # count number of collapsed reads processed
+    total_written = 0      # count number of expanded reads written
+    missing_in_map = 0     # count reads whose ID is not present in rc_map
+
+    with _open_text_auto(collapsed_fastq, "rt") as fin, \
+         _open_text_auto(output_fastq, "wt") as fout:
+
+        while True:
+            # Read the four FASTQ lines
+            header = fin.readline()
+            if not header:
+                break  # end of FASTQ
+
+            seq  = fin.readline()
+            plus = fin.readline()
+            qual = fin.readline()
+
+            # stop if file corrupted
+            if not seq or not plus or not qual:
+                break
+
+            total_reads += 1
+
+            # extract read ID (remove @)
+            clean_header = header.strip()
+            first_token = clean_header.split()[0]
+            read_id = first_token[1:] if first_token.startswith("@") else first_token
+
+            # determine RC (default to 1 if missing)
+            rc_value = rc_map.get(read_id, 1)
+            if rc_value == 0:
+                continue  # corrupted map entry; skip
+
+            if read_id not in rc_map:
+                missing_in_map += 1
+
+            # expand read RC times
+            for copy_index in range(1, rc_value + 1):
+
+                if add_suffix:
+                    # Unique read name for each expanded copy
+                    new_read_id = f"{read_id}_{copy_index}_{rc_value}"
+                    new_header = f"@{new_read_id}\n"
+                else:
+                    new_header = header  # original header (collapsed)
+
+                fout.write(new_header)
+                fout.write(seq)
+                fout.write(plus)
+                fout.write(qual)
+                total_written += 1
+
+    # Summary with the counters
+    print(f"Collapsed reads processed:   {total_reads:,}")
+    print(f"Number of expanded reads:      {total_written:,}")
+    if missing_in_map > 0:
+        print(f"Warning: {missing_in_map:,} read IDs missing in RC map")
+    print("Expansion complete.\n")
 
 
 
@@ -1232,7 +1326,7 @@ def _random_assign_numba(n_aligns):
 def assign_multimappers_randomly(
     bam_file,
     output_bam,
-    seed=1,
+    seed=123,
     summary_log_file=None,
     do_sort: bool = True,
     sort_threads: int = 2,
@@ -1329,7 +1423,7 @@ def main():
     p_bt_aln.add_argument("--threads", type=int, default=4, help="Threads for bowtie/samtools")
     p_bt_aln.add_argument("--sort-mem", default="2G", help="samtools sort memory per thread (default = 2G)")
     p_bt_aln.add_argument("--rc-map",
-                        help="RC map produced collapse (TSV or PKL)")
+                        help="RC map produced collapse (.tsv file)")
     p_bt_aln.add_argument("--save-np", choices=["yes", "no"], default="no",
                         help="Save unmapped reads via Bowtie's --un/--un-gz (default=no)")
     p_bt_aln.add_argument("--non-mappers",
@@ -1341,7 +1435,16 @@ def main():
         help="Cap reported alignments per read: use N to report up to N alignments (-k N). "
              "If omitted the script uses Bowtie -a (report all multimappers).",
     )
-
+    
+    # Unmapped expansion
+    p_expand_fq = sub.add_parser("expand-fq", help="Expand a collapsed fastq using the RC map (e.g. for unmapped reads)")
+    p_expand_fq.add_argument("--fastq", required=True, help="Collapsed fastq(.gz) file (e.g. unmapped.collapsed.fastq.gz)")
+    p_expand_fq.add_argument("--rc-map", required=True, help="RC map produced by collapse (tsv or tsv.gz)")
+    p_expand_fq.add_argument("--out", required=True, help="Output expanded fastq(.gz) file")
+    p_expand_fq.add_argument("--no-suffix", action="store_true", help="Do NOT append _1ofN suffix to read IDs (default: suffix added)")
+    
+    
+    # UWM index
     p_idx = sub.add_parser("build-index-uwm", help="Build UNIQUE weighted index from BAMs")
     p_idx.add_argument("--bams", required=True, help=".bam path OR a text file of .bam paths")
     p_idx.add_argument(
@@ -1371,19 +1474,20 @@ def main():
     p_res_uwm.add_argument("--threads", type=int, default=4, help="Threads for sorting (default=4)")
     p_res_uwm.add_argument("--sort-mem", default="2G", help="samtools sort memory per thread (default = 2G)")
     p_res_uwm.add_argument("--summary-log", help="Summary log file")
-    p_res_uwm.add_argument("--do-sort", type=bool, default=True, help="Disable sorting/indexing after resolution")
+    p_res_uwm.add_argument("--no-sort", dest="do_sort", action="store_false", help="Disable sorting indexing after resolution (default: sort BAM and build index)")
+    p_res_uwm.set_defaults(do_sort=True)
     
     
     # Random resolve arguments
     p_res_rand = sub.add_parser("resolve-random", help="Resolve multimappers and write cleaned BAM using random placement")
     p_res_rand.add_argument("--in-bam", required=True, help="Query BAM with uniques+multis")
     p_res_rand.add_argument("--out-bam", required=True, help="Output BAM (resolved random)")
-    p_res_rand.add_argument("--seed", type=int, default=1)
+    p_res_rand.add_argument("--seed", type=int, default=123)
     p_res_rand.add_argument("--summary-log", help="Summary log file")
     p_res_rand.add_argument("--threads", type=int, default=4, help="Threads for sorting (default=4)")
     p_res_rand.add_argument("--sort-mem", default="2G", help="samtools sort memory per thread (default = 2G)")
-    p_res_rand.add_argument("--do-sort", type=bool, default=True, help="Disable sorting/indexing after resolution")
-    
+    p_res_rand.add_argument("--no-sort", dest="do_sort", action="store_false", help="Disable sorting/indexing after resolution (default: sort BAM and build index)")
+    p_res_rand.set_defaults(do_sort=True)
     
     # parse args    
     args = ap.parse_args()
@@ -1444,6 +1548,13 @@ def main():
         with open(summary_log_file, "a") as sf:
             sf.write(f"Output BAM: {mapped_bam}\n\n")
     
+    elif args.cmd == "expand-fq":
+        expand_fastq_with_map(
+            collapsed_fastq=args.fastq,
+            rc_map_path=args.rc_map,
+            output_fastq=args.out,
+            add_suffix=not args.no_suffix,
+        )
 
     elif args.cmd == "build-index-uwm":
         build_weighted_unique_index_from_bams(args.bams, args.out)
@@ -1459,7 +1570,7 @@ def main():
             seed=args.seed,
             progress=True,
             summary_log_file=summary_log,
-            do_sort=True,
+            do_sort=args.do_sort,
             sort_threads=args.threads if hasattr(args, "threads") else 2,
             sort_mem=args.sort_mem,
         )
@@ -1471,7 +1582,7 @@ def main():
         output_bam=args.out_bam,
         seed=args.seed,
         summary_log_file=summary_log_file,
-        do_sort=True,
+        do_sort=args.do_sort,
         sort_threads=args.threads,
         sort_mem=args.sort_mem,
         )

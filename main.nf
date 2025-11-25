@@ -15,10 +15,7 @@ def BANNER = $/
 log.info("\n${CYAN}${BANNER}${RESET}")
 
 
-// Note: I need to add a params chanel to pass the adpter seq to fastp 
-// Just in case
 // Include the scripts for feature + fisrt nt and test
-// Thnik about include reaper to also add support for 5' adpt UMI too
 
 
 params.reads       = params.reads       ?: "${launchDir}/test/*.fastq.gz"
@@ -48,6 +45,8 @@ params.make_bedgraph = (params.make_bedgraph != null ? params.make_bedgraph : tr
 if (params.make_bedgraph instanceof String) {
     params.make_bedgraph = params.make_bedgraph.toLowerCase() in ['true','1','yes','y']
 }
+params.expand_unmapped = params.expand_unmapped ?: false //boolean
+params.n_mismatch    = params.n_mismatch    ?: 1 // integer value (bowtie allows up to 3 mismatching bases)
 params.offrate_sm  = params.offrate_sm  ?: 4
 params.thr_sm      = params.thr_sm      ?: 12
 params.smem_sm     = params.smem_sm     ?: "12G"
@@ -347,6 +346,7 @@ process map_collapse {
   python ${siRmap_script} bowtie-aln \
     --fastq ${fastq} \
     --index "\$IDX_BASE" \
+    --mismatches ${params.n_mismatch} \
     --out "\${BASENAME}.collapsed.bam" \
     --save-np yes  \
     --non-mappers "\${BASENAME}.unmapped.collapsed.fastq.gz" \
@@ -355,6 +355,33 @@ process map_collapse {
     --rc-map ${rc_map_tsv} \
     ${params.max_multimaps ? "--max-multimaps ${params.max_multimaps}" : ""}
   """
+}
+
+process expand_unmapped {
+
+  input:
+  tuple path(unmapped_fq), path(rc_map_tsv)
+  path siRmap_script
+
+  output:
+  path "*.unmapped.expanded.fastq.gz"
+  publishDir "${results_dir}/05.map", mode: 'copy'
+
+  script:
+  """
+  BASENAME=\$(basename "${unmapped_fq}")
+  BASENAME=\${BASENAME%.gz}
+  BASENAME=\${BASENAME%.fastq}
+  BASENAME=\${BASENAME%.fq}
+  BASENAME=\${BASENAME%.collapsed}  
+  BASENAME=\${BASENAME%.unmapped}  
+  
+  python ${siRmap_script} expand-fq \
+    --fastq ${unmapped_fq} \
+    --rc-map ${rc_map_tsv} \
+    --out "\${BASENAME}.unmapped.expanded.fastq.gz"
+  """
+
 }
 
 process resolve_random {
@@ -719,6 +746,8 @@ workflow {
     }
 
     map_inputs_ch = fq_join.join(map_join).map { sid, fq, m -> tuple(fq, m) }
+    // dup map_join
+    rc_map_ch = map_join
 
   } else {
    
@@ -745,9 +774,11 @@ workflow {
 
     def pulled = pullseq(collapsed_pairs)
     map_inputs_ch = pulled.fastq_map
+    // dup map_join 
+    rc_map_ch = map_join
   }
 
-  // ----- mapping gate applied to the unified channel -----
+  
   def fastq_map_for_map
   if( params.map_gate == 'all' ) {
     def all_done = map_inputs_ch.collect().map { true }
@@ -766,6 +797,19 @@ workflow {
             siRmap_script_ch,
             idx.ebwt.collect()
           )
+  // new if to expand unpaed reads by ID in case user need this
+  if( params.expand_unmapped ) {
+    def unmapped_join = mapped.unmapped_fq.map { f ->
+      def id = f.simpleName.replace('.unmapped.collapsed.fastq','')
+      tuple(id, f)
+    }
+
+    def unmapped_pairs = unmapped_join.join(rc_map_ch).map { sid, unmapped_fq, rc_map_tsv ->
+      tuple(unmapped_fq, rc_map_tsv)
+    }
+
+    expand_unmapped(unmapped_pairs, siRmap_script_ch)
+  }
 
   resolved_bams_ch = Channel.empty()
   uniq_idx_ch      = Channel.empty()

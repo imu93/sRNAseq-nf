@@ -163,6 +163,8 @@ The params.config contains all the requested parameters for sRNAseq-nf
 // ROOT should be the path of the project
 def ROOT = "${projectDir}"
 
+// Note: users can replace "${projectDir}" by "/path/of/the/project"
+
 params {
   // GENERAL INPUTS
   reads       = "${ROOT}/example/fastq/*.fastq.gz"  // path to input FASTQ files
@@ -183,11 +185,13 @@ params {
   // ALIGNMENT PARAMS
   thr_sm              = 6          // threads for small RNA mapping
   smem_sm             = "4G"       // memory for mapping and BAM processing
+  n_mismatch	      = 1	   // max number of mismatch(default = 1)
   max_multimaps       = null       // max multimapping loci per read (null = report all)
   offrate_sm          = 2          // smaller offrate = larger index, faster mapping
   assign_mode         = 'uwm'      // 'uwm' (unique weighted mapping) or 'random'
   wins_sm             = 250        // window size for UWM (ignored if assign_mode = 'random')
   expand_unmapped     = false	   // Expand unmapped reads by RC map (default = false)
+
   // POSTALIGNMENT
   use_rds                     = false   // build GRanges objects and save as RDS
   minoverlap                  = 0.7     // featureCounts minimum overlap fraction
@@ -202,7 +206,7 @@ params {
   fdr                 = 0.05     // FDR threshold
   hk_norm             = true     // use "housekeeping" feature normalization
   norm_feature        = "miRNA_S"  // feature used for housekeeping normalization
-  stringent_tmm       = false    // use stringent TMM (useful with enough replicates & many instances)
+  stringent_tmm       = false    // use stringent TMM (useful with enough replicates & many instances, false for pseudo TMM)
 }
 
 ```

@@ -41,14 +41,44 @@ if (params.max_multimaps != null) {
         params.max_multimaps = null // Reset to null if not a valid integer
     }
 }
+
+
+params.raw_mode = params.raw_mode ?: false
+// Only for benchmaks
+params.uwm_mmap_max = params.uwm_mmap_max ?: null
+if (params.uwm_mmap_max != null) {
+    try {
+        int value = params.uwm_mmap_max as int
+        if (value < 1) {
+            params.uwm_mmap_max = null
+        } else {
+            params.uwm_mmap_max = value
+        }
+    } catch (Exception e) {
+        params.uwm_mmap_max = null
+    }
+}
+
+params.uwm_suppress_equal_prob = (params.uwm_suppress_equal_prob != null
+    ? params.uwm_suppress_equal_prob.toString().toLowerCase() in ['true','1','yes','y']
+    : false)
+
+
 params.make_bedgraph = (params.make_bedgraph != null ? params.make_bedgraph : true) ?: null
 if (params.make_bedgraph instanceof String) {
     params.make_bedgraph = params.make_bedgraph.toLowerCase() in ['true','1','yes','y']
 }
+
 params.expand_unmapped = params.expand_unmapped ?: false //boolean
 params.n_mismatch    = params.n_mismatch    ?: 1 // integer value (bowtie allows up to 3 mismatching bases)
+params.index_thr     = params.index_thr ?: 1 // the max number will be the number of libraries
 params.offrate_sm  = params.offrate_sm  ?: 4
 params.thr_sm      = params.thr_sm      ?: 12
+params.save_non_mappers = (
+    params.save_non_mappers != null
+        ? params.save_non_mappers.toString().toLowerCase() in ['true','1','yes','y']
+        : true   // default: mismo comportamiento que antes (sí los guarda)
+)
 params.smem_sm     = params.smem_sm     ?: "12G"
 params.wins_sm     = params.wins_sm     ?: 250
 params.consider_strand = params.consider_strand ?: false
@@ -60,6 +90,7 @@ params.fdr            = params.fdr            ?: 0.05
 params.threshold_inc   = params.threshold_inc   ?: false   // read FC/FDR from contrast file?
 params.hk_norm	      = params.hk_norm        ?: false // boolean
 params.norm_feature   = params.norm_feature   ?: "rRNA_S"
+params.disable_tmm_for_fbn = params.disable_tmm_for_fbn  ?: false   // if true: use all features instead of TMM or pseudo-TMM
 params.stringent_tmm  = params.stringent_tmm  ?: false   // boolean
 params.use_rds        = params.use_rds        ?: true   // boolean
 params.first_nt       = params.first_nt       ?: ""
@@ -260,6 +291,32 @@ process collapse {
   """
 }
 
+process pullseq_raw {
+  label 'preproc'
+
+  input:
+    path read
+
+  output:
+    path "*ps.fastq.gz", emit: fastq
+
+  tag "${read.simpleName}"
+  publishDir "${results_dir}/04.pullseq_raw", mode: 'copy'
+
+  script:
+  """
+  base='${read.simpleName}'
+  base=\${base%.fastq}
+  base=\${base%.fastq.gz}
+  base=\${base%.fq}
+  base=\${base%.fq.gz}
+
+  pullseq -i ${read} -m ${params.minlen} -a ${params.maxlen} > "\${base}.ps.fastq"
+  pigz "\${base}.ps.fastq"
+  """
+}
+
+
 process pullseq {
   label 'preproc'
 
@@ -308,6 +365,53 @@ process build_index {
   """
 }
 
+process map_raw {
+  tag { fastq.baseName }
+  cpus params.thr_sm
+  memory params.smem_sm
+
+  input:
+    path fastq
+    path genome
+    path siRmap_script
+    path bowtie_idx         
+
+  output:
+    path "*.bam",               emit: raw_bam
+    path "*.unmapped.fastq.gz", emit: unmapped_fq, optional: true
+    path "*.log",               emit: logs
+
+  publishDir "${results_dir}/05.map_raw", mode: 'copy'
+
+  script:
+  """
+  IDX_BASE=\$(basename "${genome}")
+  IDX_BASE=\${IDX_BASE%.fa}
+  IDX_BASE=\${IDX_BASE%.fasta}
+  IDX_BASE=\${IDX_BASE%.fna}
+  IDX_BASE=\${IDX_BASE%.fa.gz}
+  IDX_BASE=\${IDX_BASE%.fasta.gz}
+  IDX_BASE=\${IDX_BASE%.fna.gz}
+
+  BASENAME=\$(basename "${fastq}")
+  BASENAME=\${BASENAME%.gz}
+  BASENAME=\${BASENAME%.fastq}
+  BASENAME=\${BASENAME%.fq}
+  BASENAME=\${BASENAME%.ps}
+
+  python ${siRmap_script} bowtie-aln \
+    --fastq ${fastq} \
+    --index "\$IDX_BASE" \
+    --mismatches ${params.n_mismatch} \
+    --out "\${BASENAME}.bam" \
+    --save-np ${params.save_non_mappers ? 'yes' : 'no'}  \
+    --non-mappers "\${BASENAME}.unmapped.fastq.gz" \
+    --threads ${params.thr_sm} \
+    --sort-mem ${params.smem_sm} \
+    ${params.max_multimaps ? "--max-multimaps ${params.max_multimaps}" : ""}
+  """
+}
+
 process map_collapse {
   tag { fastq.baseName }
   cpus params.thr_sm
@@ -321,7 +425,7 @@ process map_collapse {
 
   output:
     path "*.collapsed.bam",               emit: collapsed_bam
-    path "*.unmapped.collapsed.fastq.gz", emit: unmapped_fq
+    path "*.unmapped.collapsed.fastq.gz", emit: unmapped_fq, optional: true
     path "*.log",                         emit: logs
 
   publishDir "${results_dir}/05.map", mode: 'copy'
@@ -348,7 +452,7 @@ process map_collapse {
     --index "\$IDX_BASE" \
     --mismatches ${params.n_mismatch} \
     --out "\${BASENAME}.collapsed.bam" \
-    --save-np yes  \
+    --save-np ${params.save_non_mappers ? 'yes' : 'no'}  \
     --non-mappers "\${BASENAME}.unmapped.collapsed.fastq.gz" \
     --threads ${params.thr_sm} \
     --sort-mem ${params.smem_sm} \
@@ -381,7 +485,6 @@ process expand_unmapped {
     --rc-map ${rc_map_tsv} \
     --out "\${BASENAME}.unmapped.expanded.fastq.gz"
   """
-
 }
 
 process resolve_random {
@@ -410,16 +513,21 @@ process resolve_random {
     --seed 123 \
     --threads ${params.threads} \
     --sort-mem ${params.smem_sm} \
-    --do-sort true
+    --do-sort true \
+    ${ params.raw_mode ? '--raw' : '' }
   """
 }
 
 process build_unique_index {
   tag "unique-index"
+  cpus params.index_thr
+  memory params.smem_sm
+
 
   input:
     path siRmap_script
     path bam_paths
+    
 
   output:
     path "unique_index.pkl", emit: uniq_idx
@@ -429,7 +537,10 @@ process build_unique_index {
   script:
   """
   printf "%s\n" ${bam_paths.join(' ')} | tr ' ' '\\n' > bam_list.txt
-  python ${siRmap_script} build-index-uwm --bams bam_list.txt --out unique_index.pkl
+  python ${siRmap_script} build-index-uwm \
+                          --bams bam_list.txt \
+                          --thread ${params.index_thr} \
+                          --out unique_index.pkl 
   """
 }
 
@@ -460,7 +571,10 @@ process resolve_uwm {
     --out-bam "\${SAMPLE}.expanded.bam" \
     --threads ${params.thr_sm} \
     --sort-mem ${params.smem_sm} \
-    --seed 123 ${ params.consider_strand ? '--strand' : '' } 
+    --seed 123 ${ params.consider_strand ? '--strand' : '' }  \
+    ${ params.raw_mode ? '--raw' : '' } \
+    ${ (params.raw_mode && params.uwm_mmap_max != null) ? "--mmap-max ${params.uwm_mmap_max}" : "" } \
+    ${ (params.raw_mode && params.uwm_suppress_equal_prob) ? "--suppress-equal-prob" : "" }
   """
 }
 
@@ -585,7 +699,7 @@ process plot_firstnt {
   tag "Plot first nucleotide distributions"
 
   input:
-    path tables   // <- a list; Nextflow will stage all of them into the work dir
+    path tables   
 
   output:
     path "length_dit_fn_percentage.png", emit: png_percentage
@@ -709,6 +823,7 @@ process edgeR_dea {
     publishDir "${results_dir}/13.edgeR", mode: 'copy'
 
     script:
+    def fbnFlag = params.disable_tmm_for_fbn ? '--disable_tmm_for_fbn' : ''
     def STRICT = params.stringent_tmm ? 'TRUE' : 'FALSE'
     def HKNORM = params.hk_norm ? 'TRUE' : 'FALSE'
     def TRESH  = params.threshold_inc ? 'TRUE' : 'FALSE' 
@@ -721,33 +836,40 @@ process edgeR_dea {
       --fdr ${params.fdr} \
       --hk_norm ${HKNORM} \
       --norm_feature '${params.norm_feature}' \
-      --stringent_tmm ${STRICT}
+      --stringent_tmm ${STRICT} \
+      ${fbnFlag}
     """
 }
 
 workflow {  
 
   def map_inputs_ch
+  def rc_map_ch
   if ( params.preproc == 'fastp' ) {
    
     fp_out = fastp(reads_ch)
     multiqc_fastp( fp_out.qc_json.collect() )
 
-    def collapsed = collapse(fp_out.fastq, collapse_script_ch)
+    if( params.raw_mode ) {
+      map_inputs_ch = fp_out.fastq
+      rc_map_ch     = Channel.empty()
+    } else {
+      def collapsed = collapse(fp_out.fastq, collapse_script_ch)
 
-    def fq_join = collapsed.collapsed_fq.map { fq ->
-      def id = fq.simpleName.replace('.collapsed.fastq','')
-      tuple(id, fq)
+      def fq_join = collapsed.collapsed_fq.map { fq ->
+        def id = fq.simpleName.replace('.collapsed.fastq','')
+        tuple(id, fq)
+      }
+
+      def map_join = collapsed.map_tsv.map { m ->
+        def id = m.simpleName.replace('.map.tsv','')
+        tuple(id, m)
+      }
+
+      map_inputs_ch = fq_join.join(map_join).map { sid, fq, m -> tuple(fq, m) }
+      // dup map_join
+      rc_map_ch = map_join
     }
-
-    def map_join = collapsed.map_tsv.map { m ->
-      def id = m.simpleName.replace('.map.tsv','')
-      tuple(id, m)
-    }
-
-    map_inputs_ch = fq_join.join(map_join).map { sid, fq, m -> tuple(fq, m) }
-    // dup map_join
-    rc_map_ch = map_join
 
   } else {
    
@@ -758,24 +880,30 @@ workflow {
     fastqc_tr = fastqc_trimm(trimmed)
     multiqc_tr( fastqc_tr.qc_zip.collect() )
 
-    def collapsed  = collapse(trimmed, collapse_script_ch)
+    if( params.raw_mode ) {
+      def pulled_raw = pullseq_raw(trimmed)
+      map_inputs_ch = pulled_raw.fastq
+      rc_map_ch     = Channel.empty()
+    } else {
+      def collapsed  = collapse(trimmed, collapse_script_ch)
 
-    def fq_join = collapsed.collapsed_fq.map { fq ->
-      def id = fq.simpleName.replace('.collapsed.fastq','')
-      tuple(id, fq)
+      def fq_join = collapsed.collapsed_fq.map { fq ->
+        def id = fq.simpleName.replace('.collapsed.fastq','')
+        tuple(id, fq)
+      }
+
+      def map_join = collapsed.map_tsv.map { m ->
+        def id = m.simpleName.replace('.map.tsv','')
+        tuple(id, m)
+      }
+
+      def collapsed_pairs = fq_join.join(map_join).map { sid, fq, m -> tuple(fq, m) }
+
+      def pulled = pullseq(collapsed_pairs)
+      map_inputs_ch = pulled.fastq_map
+      // dup map_join 
+      rc_map_ch = map_join
     }
-
-    def map_join = collapsed.map_tsv.map { m ->
-      def id = m.simpleName.replace('.map.tsv','')
-      tuple(id, m)
-    }
-
-    def collapsed_pairs = fq_join.join(map_join).map { sid, fq, m -> tuple(fq, m) }
-
-    def pulled = pullseq(collapsed_pairs)
-    map_inputs_ch = pulled.fastq_map
-    // dup map_join 
-    rc_map_ch = map_join
   }
 
   
@@ -791,14 +919,27 @@ workflow {
 
   idx = build_index(siRmap_script_ch, genome_ch)
 
-  mapped = map_collapse(
-            fastq_map_for_map,
-            genome_ch,
-            siRmap_script_ch,
-            idx.ebwt.collect()
-          )
+  def mapped
+  if( params.raw_mode ) {
+    mapped = map_raw(
+              fastq_map_for_map,
+              genome_ch,
+              siRmap_script_ch,
+              idx.ebwt.collect()
+            )
+  } else {
+    mapped = map_collapse(
+              fastq_map_for_map,
+              genome_ch,
+              siRmap_script_ch,
+              idx.ebwt.collect()
+            )
+  }
+
+  def mapped_bam_ch = params.raw_mode ? mapped.raw_bam : mapped.collapsed_bam
+
   // new if to expand unpaed reads by ID in case user need this
-  if( params.expand_unmapped ) {
+  if( params.expand_unmapped && !params.raw_mode && params.save_non_mappers ) {
     def unmapped_join = mapped.unmapped_fq.map { f ->
       def id = f.simpleName.replace('.unmapped.collapsed.fastq','')
       tuple(id, f)
@@ -811,16 +952,17 @@ workflow {
     expand_unmapped(unmapped_pairs, siRmap_script_ch)
   }
 
+
   resolved_bams_ch = Channel.empty()
   uniq_idx_ch      = Channel.empty()
   if ( params.assign_mode == 'uwm' ) {
     uniq_idx_ch = build_unique_index(
                     siRmap_script_ch,
-                    mapped.collapsed_bam.collect()
+                    mapped_bam_ch.collect()
                   ).uniq_idx
 
     def uwm_out = resolve_uwm(
-                    mapped.collapsed_bam,
+                    mapped_bam_ch,
                     uniq_idx_ch,
                     siRmap_script_ch
                   )
@@ -834,7 +976,7 @@ workflow {
 
   } else if ( params.assign_mode == 'random' ) {
     def rand_out = resolve_random(
-                     mapped.collapsed_bam,
+                     mapped_bam_ch,
                      siRmap_script_ch
                    )
 
@@ -846,7 +988,7 @@ workflow {
     )
 
   } else {
-    resolved_bams_ch = mapped.collapsed_bam
+    resolved_bams_ch = mapped_bam_ch
   }
   
   if( params.use_rds ) {

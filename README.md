@@ -173,48 +173,55 @@ params {
   contrast    = "${ROOT}/contrast.txt"  // contrast file for differential expression
 
   // QC PARAMS
-  preproc             = 'fastp'    // 'fastp' or 'legacy' (legacy = cutadapt + fastqc)
-  fastp_use_adapter   = true       // Should fastp use a provided adapter or auto-detect? (null = auto; set true to force adapter)
-  threads             = 1          // threads for QC steps
-  adapter             = "AGATCGGAAGAG"  // 3' adapter sequence
-  minlen              = 18         // minimum read length
-  maxlen              = 27         // maximum read length
-  // If your code expects strings ('all'/'none'), set map_gate = 'all' or 'none' instead of boolean:
-  map_gate            = true       // wait for all FASTQs to finish preprocessing before mapping
+  preproc           = 'fastp'    // 'fastp' or 'legacy' (legacy = cutadapt + fastqc)
+  fastp_use_adapter = true       // Should fastp use a provided adapter or auto-detect? (null = auto; true = force adapter)
+  threads           = 1          // threads for QC steps
+  adapter           = "AGATCGGAAGAG"  // 3' adapter sequence
+  minlen            = 18         // minimum read length
+  maxlen            = 27         // maximum read length
+  map_gate          = 'none'     // 'all' = wait for all FASTQs to finish before mapping; 'none' = start mapping as soon as data is ready
 
   // ALIGNMENT PARAMS
-  thr_sm              = 6          // threads for small RNA mapping
-  smem_sm             = "4G"       // memory for mapping and BAM processing
-  n_mismatch	      = 1	   // max number of mismatch(default = 1)
-  max_multimaps       = null       // max multimapping loci per read (null = report all)
-  offrate_sm          = 2          // smaller offrate = larger index, faster mapping
-  assign_mode         = 'uwm'      // 'uwm' (unique weighted mapping) or 'random'
-  wins_sm             = 250        // window size for UWM (ignored if assign_mode = 'random')
-  expand_unmapped     = false	   // Expand unmapped reads by RC map (default = false)
+  thr_sm        = 6          // threads for small RNA mapping
+  smem_sm       = "4G"       // samtools sort/mapping memory
+  n_mismatch    = 1          // max number of mismatches (Bowtie -v, default = 1)
+  max_multimaps = null       // max multimapping loci per read (null = report all; forwarded to Bowtie -k)
+  offrate_sm    = 2          // smaller offrate = larger index, faster mapping
+  assign_mode   = 'uwm'      // 'uwm' (unique weighted mapping) or 'random'
+  index_thr     = 1          // Max number of parallel processes for building unique index. The maximum number will be the total number of libraries
+  wins_sm       = 250        // window size (nt) for UWM scoring
+  expand_unmapped   = false  // expand unmapped reads using RC map (only when collapse is used)
+  save_non_mappers  = true   // save unmapped reads as *.unmapped(.collapsed).fastq.gz (false = do not write unmappers)
+
+  // RAW MODE / BENCHMARK OPTIONS
+  raw_mode                = false  // use UWM/random directly on uncollapsed reads (RC=1, keep original QNAME when possible)
+  uwm_mmap_max            = null   // only in raw_mode+uwm: drop reads with NH > this value  null = no limit
+  uwm_suppress_equal_prob = false  // only in raw_mode+uwm: if all candidate loci have equal probability, do not place the read (discard)
 
   // POSTALIGNMENT
-  use_rds                     = false   // build GRanges objects and save as RDS
-  minoverlap                  = 0.7     // featureCounts minimum overlap fraction
-  consider_strand             = false   // consider strand when quantifying uniquely mapped reads in UWM
-  apply_first_nt_downstream   = true    // continue pipeline after first-nucleotide plot analysis
-  first_nt                    = ""      // filter by first nucleotide (e.g. "G"); empty string = no filter
-  make_bedgraph               = false   // create RPM-normalized, stranded bedGraph files
+  use_rds                   = false   // build GRanges objects and save as RDS
+  minoverlap                = 0.7     // featureCounts minimum overlap fraction
+  consider_strand           = false   // consider strand in UWM (index + assignment)
+  apply_first_nt_downstream = true    // continue pipeline beyond first-nucleotide plots
+  first_nt                  = ""      // filter by first nt (e.g. "G" or "AT"); empty string = no filter
+  make_bedgraph             = false   // create RPM-normalized, strand-specific bedGraph files
 
   // DEA PARAMS
-  threshold_inc       = false    // threshold values included in contrast file
-  lfc                 = 1        // log2 fold-change threshold
-  fdr                 = 0.05     // FDR threshold
-  hk_norm             = true     // use "housekeeping" feature normalization
-  norm_feature        = "miRNA_S"  // feature used for housekeeping normalization
-  stringent_tmm       = false    // use stringent TMM (useful with enough replicates & many instances, false for pseudo TMM)
+  threshold_inc = false     // if true, read FC/FDR thresholds from contrast file
+  lfc           = 1         // log2 fold-change threshold
+  fdr           = 0.05      // FDR threshold
+  hk_norm       = true      // use housekeeping-feature-based normalization
+  norm_feature  = "miRNA_S" // feature used for hk_norm
+  stringent_tmm = false     // stricter TMM (useful with many replicates); false = more relaxed pseudo-TMM
 }
+
 
 ```
 | Param                        | Type                | Example / Default                                                                 | What it controls                                                                                               |
 |-------------------------------|---------------------|------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------|
 | `reads`                       | string (glob)       | `${projectDir}/example/fastq/*.fastq.gz`                                           | Input FASTQ files (gzipped allowed). The glob is expanded by Nextflow.                                        |
 | `genome`                      | path                | `${projectDir}/example/genome/caenorhabditis_elegans.PRJNA13758.WBPS19.genomic.fa` | Reference genome FASTA used to build the Bowtie index.                                                        |
-| `annotation`                  | path                | `${projectDir}/example/annotation/caenorhabditis_elegans.PRJNA13758.WBPS19.overlapping_annotation.gff3.gz` | GFF3 file containing sRNA feature annotations for quantification.                                             |
+| `annotation`                  | path                | `${projectDir}/example/annotation/caenorhabditis_elegans.PRJNA13758.WBPS19.overlapping_annotation.gff3.gz` | GFF3 file containing sRNA feature annotations for quantification                                             |
 | `contrast`                    | path                | `${projectDir}/contrast.txt`                                                       | edgeR contrast or design file specifying sample group comparisons.                                            |
 | `preproc`                     | string (enum)       | `fastp`                                                                            | Read preprocessing mode: `fastp` (modern) or `legacy` (cutadapt + fastqc).                                    |
 | `fastp_use_adapter`           | bool/null           | `null`                                                                             | If `true`, fastp uses the provided adapter sequence; if `null` or `false`, auto-detects adapters.             |
@@ -230,19 +237,26 @@ params {
 | `wins_sm`                     | int (nt)            | `250`                                                                              | Window size (nt) for Unique Weighted Mapping scoring around each candidate alignment.                         |
 | `max_multimaps`               | int/null            | `null`                                                                             | Maximum allowed multimapping loci per read (`null` = report all).                                             |
 | `use_rds`                     | bool                | `false`                                                                            | If `true`, build and store R `GRanges` objects (`.Rds`) for faster downstream analysis.                       |
-| `minoverlap`                  | float (0–1)         | `0.7`                                                                              | Minimum fractional overlap of a read with a feature to count it (featureCounts).                              |
-| `consider_strand`             | bool                | `false`                                                                            | If `true`, consider strand information during unique-weighted mapping quantification.                         |
-| `first_nt`                    | string (A/C/G/T/U)  | `""`                                                                               | Filter reads by first nucleotide (e.g., `"G"` or `"AT"`). Empty string disables filtering.                    |
-| `apply_first_nt_downstream`   | bool                | `true`                                                                             | If `true`, apply first-nt filtering to downstream quantification and DEA; if `false`, only generate plots.    |
-| `make_bedgraph`               | bool                | `false`                                                                            | If `true`, create RPM-normalized stranded bedGraph coverage files                                            |
+| `minoverlap`                  | float (0–1)         | `0.7`                                                                              | Minimum fractional overlap of a read with a feature to count it (featureCounts)                               |
+| `consider_strand`             | bool                | `false`                                                                            | If `true`, consider strand information during unique-weighted mapping quantification                          |
+| `first_nt`                    | string (A/C/G/T/U)  | `""`                                                                               | Filter reads by first nucleotide (e.g., `"G"` or `"AT"`). Empty string disables filtering                     |
+| `apply_first_nt_downstream`   | bool                | `true`                                                                             | If `true`, apply first-nt filtering to downstream quantification and DEA; if `false`, only generate plots     |
+| `make_bedgraph`               | bool                | `false`                                                                            | If `true`, create RPM-normalized stranded bedGraph coverage files                                             |
 | `threshold_inc`               | bool                | `false`                                                                            | If `true`, read logFC/FDR thresholds from the contrast file (columns `FC` and `FDR`).                         |
 | `lfc`                         | float               | `1`                                                                                | Log2 fold-change cutoff used in edgeR differential expression reporting.                                      |
 | `fdr`                         | float (0–1)         | `0.05`                                                                             | Benjamini–Hochberg false discovery rate threshold for significance in edgeR.                                  |
 | `hk_norm`                     | bool                | `true`                                                                             | Enable housekeeping-feature normalization instead of relying solely on TMM.                                   |
 | `norm_feature`                | string              | `"miRNA"`                                                                          | Feature category used for housekeeping normalization when `hk_norm=true`.                                     |
 | `stringent_tmm`               | bool                | `false`                                                                            | Use stricter TMM normalization (trims more outliers; useful with many replicates).                            |
-| `expand_unmapped`		| bool		      | `false`										   | Expand unmapped FASTQ files based in RC map (.tsv files)	|
-| `n_mismatch`			| int		      | `int`										   | Maximum nuber of mismatches allowed in bowtie alignment	|
+| `expand_unmapped`		          | bool		            | `false`										                                                         | Expand unmapped FASTQ files based in RC map (.tsv files)	                                                     |
+| `n_mismatch`			            | int		              | `int`										                                                           | Maximum nuber of mismatches allowed in bowtie alignment	                                                     |
+| `raw_mode`                    | bool                | `false`                                                                            | If `true`, run the *raw* branch: no collapse, assume `RC=1`, keep original QNAMEs in UWM/random assignment    |
+| `uwm_mmap_max`                | int/null            | `null` (e.g. `50`)                                                                 | **Only in `raw_mode` + `assign_mode=uwm`**: drop reads whose Bowtie `NH` exceeds this value                   |
+| `uwm_suppress_equal_prob`     | bool                | `false`                                                                            | **Only in `raw_mode` + `assign_mode=uwm`**: if all candidate loci have equal probability, discard the read    |
+| `save_non_mappers`            | bool                | `true`                                                                             | Whether to save unmapped reads from siRMap. If `false`, unmapped FASTQ files are not produced                 |
+| `index_thr`                   | int                 | `1`                                                                                | Max number of parallel processes for building unique index. The maximum number will be the total number of libraries (Default=1) |
+
+
 ---
 
 ## Verification test
@@ -310,23 +324,105 @@ apptainer exec \
 
 ![Workflow DAG](docs/sRNAseq-nf_2.jpg)
 
+
 ## Outputs
 
-1. **01.raw_qc/** — FastQC + MultiQC (raw) 
-2. **02.cut_adapt/** — Trimmed reads (Cutadapt) 
-3. **03.trimmed_qc/** — FastQC + MultiQC (trimmed) 
-4. **04.pullseq/** — Length-filtered reads (`minlen`–`maxlen`) 
-5. **05.map/** — Bowtie1 alignment results 
-6. **06.uwm_index/** — Unique mapper index 
-7. **06.resolved_uwm** — Resolved multimappers
-8. **06.summary** — Summary plots of aligmnet and asignment
-9. **07.rds/** — GRanges objects for first-nt plots 
-10. **08.fn_mtx/** — First-nt × read-length matrices (RDS) 
-11. **09.fn_plots** — First-nt distribution plots
-11. **10.bams_firstnt/** — Filtered bam files by first nt (Optional) 
-12. **11.featureCounts/** — Rsubread featureCounts results 
-14. **12.bedGraph/** — RPM normalized/stranded bedGraph files
-15. **13.edgeR** — MDS/MA plots and DEA tables (TMM and feature–anchored)
+All results are written under a timestamped directory, e.g. `Results_YYYYMMDD_HHMMSS/`
+
+### Pre-processing & QC
+
+- **01.raw_qc/**  
+  FastQC + MultiQC on *raw* FASTQ files (only when `preproc = 'legacy'`)
+
+- **01.fastp_qc/**  
+  fastp HTML/JSON reports + MultiQC summary (only when `preproc = 'fastp'`)
+
+- **02.cut_adapt/**  
+  Adapter-trimmed reads produced by Cutadapt (only when `preproc = 'legacy'`)
+
+- **03.trimmed_qc/**  
+  FastQC + MultiQC on trimmed reads (only when `preproc = 'legacy'`)
+
+### Length filtering & collapsing
+
+- **04.pullseq_raw/**  
+  Length-filtered reads (`minlen`–`maxlen`) from *raw* FASTQ  
+  (only when `preproc = 'legacy'` **and** `raw_mode = true`)
+
+- **04.pullseq/**  
+  Length-filtered, collapsed reads (`minlen`–`maxlen`)  
+
+- **05.map/**  
+  Collapsed Bowtie1 alignments and related files (when `raw_mode = false`):  
+  - `*.collapsed.bam` — mapped, collapsed BAM with `NH` and `RC` tags
+  - `*.unmapped.collapsed.fastq.gz` — unmapped collapsed reads (if `save_non_mappers = true`) 
+  - `*.unmapped.expanded.fastq.gz` — unmapped reads expanded using the RC map  
+    (only when `expand_unmapped = true` **and** `save_non_mappers = true`) 
+  - `*.map.tsv.gz` — RC maps produced by the `collapse` step
+
+- **05.map_raw/**  
+  Bowtie1 alignments for *raw* reads (when `raw_mode = true`):  
+  - `*.bam` — raw mapped BAM (no collapse, `RC = 1`)
+  - `*.unmapped.fastq.gz` — unmapped reads (if `save_non_mappers = true`)
+
+### Multimapper resolution (UWM / random)
+
+- **06.uwm_index/**  
+  Unique-mapper index used by UWM (output of `build-index-uwm`).
+
+- **06.resolved_uwm/**  
+  Resolved BAMs when `assign_mode = 'uwm'`:  
+  - `*.expanded.bam` — BAM with one placement per read and reads expanded by `RC`.  
+  - Logs including UWM stats, `mmap_max` suppression counts, and equal-probability suppression.
+
+- **06.resolved_random/**  
+  Resolved BAMs when `assign_mode = 'random'`:  
+  - `*.expanded.bam` — BAM after random multimapper assignment and RC expansion.  
+  - Logs with random assignment stats.
+
+- **06.summary/**  
+  Summary plots and tables for mapping + multimapper resolution  
+  (produced by `02.summary_uwm.R` or `02.summary_rand.R` depending on `assign_mode`).
+
+### R objects & first-nt summaries
+
+- **07.rds/**  
+  R `Rds` matrices/GRanges derived from BAMs (only when `use_rds = true`).
+
+- **08.fn_mtx/**  
+  First-nucleotide × read-length matrices (`first_nt_rlength.Rds`).
+
+- **09.fn_counts/**  
+  Per-sample tables with first-nt counts per read length (`*.firstnt.tsv`).
+
+- **09.fn_plots/**  
+  First-nucleotide distribution plots across read lengths  
+  (e.g. `length_dit_fn_percentage.png`).
+
+- **07.bams_firstnt/**  
+  BAMs filtered by first nucleotide (`first_nt` parameter),  
+  used downstream for quantification/DEA when:  
+  - `first_nt` is non-empty **and**  
+  - `apply_first_nt_downstream = true`.
+
+### Quantification, coverage, and DEA
+
+- **11.featureCounts/**  
+  Rsubread featureCounts outputs:  
+  - `featureCounts_counts.txt` — main count matrix.  
+  - `*.featureCounts` — per-feature read assignment tables.  
+  - `*.RDS` — R objects with count data.
+
+- **12.bedGraphs/**  
+  RPM-normalized, strand-aware bedGraph coverage files (only when `make_bedgraph = true`).
+
+- **13.edgeR/**  
+  edgeR differential expression analysis results:  
+  - `tmm/` — TMM normalization outputs.  
+  - `norm/` — normalized counts and related objects.  
+  - `dge/` — DGEList objects and result tables.  
+  - `figures/` — MDS plots, MA plots, volcano plots, etc.
+
 
 > If `--apply_first_nt_downstream true`, `featureCounts`, bedGraphs, and DEA use the **filtered** BAMs
 

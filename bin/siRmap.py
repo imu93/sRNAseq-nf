@@ -1340,7 +1340,7 @@ def _load_index_numpy_dir(index_dir: str, use_mmap: bool = True):
 
 # Since I remove the samtools sort from the mapping function I need my memory helper
 # to parse human readable memory strings like 2G, 500M
-def _parse_memory_to_bytes(value: str) -> int:
+def _parse_mem_to_bytes(value: str) -> int:
     """
     Handle memory (v2)
     """

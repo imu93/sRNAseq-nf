@@ -3,8 +3,8 @@
 # Code writen by: Isaac Martinez Ugalde PhD
 # Aim:
 # siRmap for sRNA alignment and multimapping placement
-# Last update: 01-12-2025
-# This is the siRmap v2.0.0.2 module for mapping small RNA seq data
+# Last update: 11-12-2025
+# This is the siRmap v2.1.0.0 module for mapping small RNA seq data
 # The biigest changes are the use of numba to speed up the UWM assignment
 
 
@@ -18,7 +18,7 @@
 # parameter to cap the number of reported alignments per read. 
 
 
-# In addition, have updated the CLI to be more user friendly help messages and defaults 
+# In addition, I have updated the CLI to be more user friendly help messages and defaults 
 # This version also adds suppor for saving indices using numpy binary format instead of pickle
 
 # This last feature is under development and may require re-building existing indices
@@ -80,6 +80,25 @@
 
 # 10-12-2025
 # Improved function for memory distribution in bowtie parse_memory_to_bytes
+
+# 11-12-2025 
+# After the implementation of build_weighted_unique_index_from_bams early this dec (01-12-2025). 
+# I noticed an improvement in the speed in some libraries, but after testing the raw mode with
+# libraries with up to 40 million reads I noticed that the ram can explode in laptops with less than
+# 30G of RAM. Using trillium is not a problem, in terms of RAM but indexing still slow. I notice that this 
+# was an algorithm problem, not just ram. Thus, I decided to work in a new  function: 
+# def build_weighted_unique_index_from_bams_lowmem.
+# This new implementation, uses the idea of the behaviour using collapsed reads but aplied to
+# both collapsed and raw. The idea is to collapse by loci and sum the RC, so that the idex decese 
+# in size, reducing RAM usage and time of processing. After some testing using close
+# to 90 C. elegans libraries, I noticed a dramatic improvement ~26× faster (75 min to 2.9 min)
+# ~18× less peak RAM (154 GB  to 8.3 GB). From here I have a v2.1 of siRmap
+
+# Note: after bencharking, I also can confirm no diffrences in results, except very 
+# but very low millionesimal diffrences on FDR values after DEA, but not at the level 
+# of biological conclusions. So this is not a problem. I culd be because of 
+# some random steps, and eventhough this is not even a real cahnge. 
+# I'll still testing this new function to fully remove the old one
 
 import shutil
 import os
@@ -596,7 +615,8 @@ def _save_index_numpy_dir(index: dict, out_prefix: str):
     return out_dir
 
 
-# Now I need to tweak my function to read multiple bams 
+# DEPRECATED (legacy v1)
+# Replaced by build_weighted_unique_index_from_bams_lowmem. Kept temporarily for reference; safe to delete.
 def build_weighted_unique_index_from_bams(bam_list_or_bam, output_index="unique_index.pkl"):
     # Lets build lists to save the meta data
     chr_list    = []
@@ -675,7 +695,7 @@ def build_weighted_unique_index_from_bams(bam_list_or_bam, output_index="unique_
 
 
             # Now is time to do a trick with the windows to precompute the RC
-            # This potentially can help to save time when counting overlaps around a 
+            # This help to save time when counting overlaps around a 
             # window defined by each multimapper. 
             
             # Here I'll build to lists of cumulative sum of RC one for start and one of the end
@@ -726,173 +746,193 @@ def build_weighted_unique_index_from_bams(bam_list_or_bam, output_index="unique_
         print(f"Warning: failed to write .npidx index: {e}")
         
         
-# Although I'll keep this version the original index function I'll start testing a parallel version:
-def _collect_unique_from_single_bam(bam_path: str):
+def _build_partial_index_from_bam_lowmem(bam_path: str):
     """
-    Collect unique-mapper coordinates + RC from a single BAM
+    This helper reads a SINGLE BAM and builds a partial idx
+    Instead of saving one entry per unique read I decided to go back to the idea 
+    of collapsed reads. So now, the RC per loci is acumulated. 
     """
-    chr_list    = []
-    start_list  = []
-    end_list    = []
-    strand_list = []
-    rc_list     = []
+    starts_dict = defaultdict(dict)  
+    ends_dict   = defaultdict(dict)
 
     with pysam.AlignmentFile(bam_path, "rb") as bam:
         for read in bam.fetch(until_eof=True):
-            # skip unmapped (just in case)
+
             if read.is_unmapped:
                 continue
+
             try:
                 nh = read.get_tag("NH")
-            # Only keep reads with NH = 1 (Unieues)
             except Exception:
                 nh = 1
-            # take ride of MM too
+           
             if nh != 1:
                 continue
-            # get the RC
+
             rc_val = _get_rc_safe(read)
-            # append to each list
-            chr_list.append(read.reference_name)
-            start_list.append(read.reference_start)
-            end_list.append(read.reference_end)
-            strand_list.append(-1 if read.is_reverse else 1)
-            rc_list.append(int(rc_val))
+            if rc_val <= 0:
+                continue
+            
+            chrom = read.reference_name
+            start = read.reference_start
+            end   = read.reference_end
 
-    return chr_list, start_list, end_list, strand_list, rc_list
+            if end <= start:
+                continue
+
+            # Strand is mapped to '+' or '-' as a character, consistent with the index keys
+            strand_ch = '-' if read.is_reverse else '+'
+            key = (chrom, strand_ch)
+            sd = starts_dict[key]
+            sd[start] = sd.get(start, 0) + rc_val
+            ed = ends_dict[key]
+            ed[end] = ed.get(end, 0) + rc_val
+    return starts_dict, ends_dict
 
 
-# Now this function will be an extension of the provious one but
-# The idea here is to also be able to build the index in parallel
-def build_weighted_unique_index_from_bams(
+def build_weighted_unique_index_from_bams_lowmem(
     bam_list_or_bam,
     output_index="unique_index.pkl",
     threads: int = 1,
 ):
-    # Lets build lists to save the meta data
-    chr_list    = []
-    start_list  = []
-    end_list    = []
-    strand_list = []
-    rc_list     = []
+    """
+    Low-memory version of build_weighted_unique_index_from_bams, with
+    multi-process support (threads).
 
-    # Read my list of bams
+        Instead of storing ONE entry per unique read (which is RAM intensive),
+        I will accumulate the RC per genomic position:
+        (chrom, strand, start) -> total_RC_at_start
+        (chrom, strand, end)   -> total_RC_at_end
+        This is the same as for build_weighted_unique_index_from_bams      
+
+        This is done per BAM  and then all partial indices are merged here into a single index
+    """
+
     bam_paths = _read_bam_paths(bam_list_or_bam)
     if not bam_paths:
         raise ValueError("Error: No BAMs found, please pass a valid bam list")
+    
+    
+    # Cap the nuber of threads of eficiency (same as before)
+    num_bams = len(bam_paths)
+    num_workers = max(1, min(int(threads), num_bams))
+    print(f"Building unique index from {num_bams} BAM(s) using {num_workers} worker(s)")
+    
+    # With this I end up with ONE entry per (chrom, strand, position) instead of one entry per read
+    global_starts_by_chr_strand = defaultdict(dict) 
+    global_ends_by_chr_strand   = defaultdict(dict)
 
-    n_bams = len(bam_paths)
-    # I'll cap the workers by the N of bam files, this will help to reduce overload
-    n_workers = max(1, min(int(threads), n_bams))
-    # And just to be clear:
-    print(f"Building UNIQUE index from {n_bams} BAM(s) using {n_workers} worker(s)")
+    # If one worker or more
+    if num_workers == 1:
+        # for to interate one by one
+        for bam_path in bam_paths:
+            print(f"  Processing {os.path.basename(bam_path)} (1 worker)")
 
-    #  One worker or 1 BAM just reuse the original loop
-    if n_workers == 1:
-        for lib in bam_paths:
-            with pysam.AlignmentFile(lib, "rb") as bam:
-                for read in tqdm(
-                    bam.fetch(until_eof=True),
-                    desc=f"Reading {os.path.basename(lib)}",
-                    unit="reads",
-                    leave=False,
-                ):
-                    if read.is_unmapped:
-                        continue
-                    nh = read.get_tag("NH")
-                    if nh != 1:
-                        continue
+            starts_for_bam, ends_for_bam = _build_partial_index_from_bam_lowmem(bam_path)
 
-                    rc_list.append(int(read.get_tag("RC")))
-                    chr_list.append(read.reference_name)
-                    start_list.append(read.reference_start)
-                    end_list.append(read.reference_end)
-                    strand_list.append(-1 if read.is_reverse else 1)
+            # Merge this partial index into the global dictionaries
+            for chr_strand_key, starts_by_pos in starts_for_bam.items():
+                global_starts_for_key = global_starts_by_chr_strand[chr_strand_key]
+                for pos, rc in starts_by_pos.items():
+                    global_starts_for_key[pos] = global_starts_for_key.get(pos, 0) + rc
+
+            for chr_strand_key, ends_by_pos in ends_for_bam.items():
+                global_ends_for_key = global_ends_by_chr_strand[chr_strand_key]
+                for pos, rc in ends_by_pos.items():
+                    global_ends_for_key[pos] = global_ends_for_key.get(pos, 0) + rc
+
     else:
-        # Each worker processes one BAM and returns partial lists
-        with Pool(processes=n_workers) as pool:
-            for bam_path, res in zip(
+        # Pool to process several BAMs in parallel
+        # each worker runs _build_partial_index_from_bam_lowmem(bam_path)
+        with Pool(processes=num_workers) as pool:
+            for bam_path, (starts_for_bam, ends_for_bam) in zip(
                 bam_paths,
-                pool.imap_unordered(_collect_unique_from_single_bam, bam_paths),
+                pool.imap_unordered(_build_partial_index_from_bam_lowmem, bam_paths),
             ):
-                chrom_list_par, start_list_par, end_list_par, strand_list_par, rc_list_par = res
-                chr_list.extend(chrom_list_par)
-                start_list.extend(start_list_par)
-                end_list.extend(end_list_par)
-                strand_list.extend(strand_list_par)
-                rc_list.extend(rc_list_par)
+                print(f"  Received partial index for {os.path.basename(bam_path)}")
 
-    # Now build indexes in numpy 
-    chroms = np.array(chr_list,    dtype=object)
-    starts = np.array(start_list,  dtype=np.int32)
-    ends   = np.array(end_list,    dtype=np.int32)
-    strands= np.array(strand_list, dtype=np.int8)
-    rc     = np.array(rc_list,     dtype=np.int64)
+                # Merge starts sum RC per position for each (chrom,strand)
+                for chr_strand_key, starts_by_pos in starts_for_bam.items():
+                    global_starts_for_key = global_starts_by_chr_strand[chr_strand_key]
+                    for pos, rc in starts_by_pos.items():
+                        global_starts_for_key[pos] = global_starts_for_key.get(pos, 0) + rc
 
-    # Use a mask just to save valid reads 
-    mask = (ends > starts)
-    chroms  = chroms[mask]
-    starts  = starts[mask]
-    ends    = ends[mask]
-    strands = strands[mask]
-    rc      = rc[mask]
+                # Merge ends: same for end positions
+                for chr_strand_key, ends_by_pos in ends_for_bam.items():
+                    global_ends_for_key = global_ends_by_chr_strand[chr_strand_key]
+                    for pos, rc in ends_by_pos.items():
+                        global_ends_for_key[pos] = global_ends_for_key.get(pos, 0) + rc
 
-    # Order by chromosome, start, strand
-    _, chrom_code = np.unique(chroms, return_inverse=True)
-    order = np.lexsort((strands, starts, chrom_code))
+    # Now bild the final index
+    index = {}
 
-    chroms_sorted  = chroms[order]
-    starts_sorted  = starts[order]
-    ends_sorted    = ends[order]
-    strands_sorted = strands[order]
-    rc_sorted      = rc[order]
+    # Union of all (chrom,strand) keys present in either starts or ends
+    chrom_strand_keys = set(global_starts_by_chr_strand.keys()) | set(global_ends_by_chr_strand.keys())
 
-    # Build index blocks 
-    index = {} 
-    chroms_unique = np.unique(chroms_sorted)
-    for chrom in chroms_unique:
-        for strand_i in (-1, +1):
-            mask_ch_str = (chroms_sorted == chrom) & (strands_sorted == strand_i)
-            start_block  = starts_sorted[mask_ch_str]
-            rcs_block    = rc_sorted[mask_ch_str]
-            end_block    = ends_sorted[mask_ch_str]
+    for chr_strand_key in chrom_strand_keys:
+        chrom, strand_ch = chr_strand_key
 
-            starts_pos  = start_block.astype(np.int32, copy=False)
-            starts_pref = np.cumsum(rcs_block, dtype=np.int64)
+        s_dict = global_starts_by_chr_strand.get(chr_strand_key, {})
+        if s_dict:
+            # Convert the pos and rc dict into NumPy arrays
+            start_positions = np.fromiter(s_dict.keys(),   dtype=np.int32)
+            start_rc_sums   = np.fromiter(s_dict.values(), dtype=np.int64) # since RC could be large I'll use int64
+            
+            # Sort by genomic position 
+            start_order = np.argsort(start_positions, kind="stable")
+            start_positions = start_positions[start_order]
+            start_rc_sums   = start_rc_sums[start_order]
+            # Store positions as int32 
+            starts_pos  = start_positions.astype(np.int32, copy=False)
+            
+            # Prefix sum of RC: for each position, how many RCs have started
+            # up to and including that position
+            starts_pref = np.cumsum(start_rc_sums, dtype=np.int64)
+        else:
+            # If there are no reads for this (chrom,strand), use empty arrays
+            starts_pos  = np.empty(0, dtype=np.int32)
+            starts_pref = np.empty(0, dtype=np.int64)
 
-            if end_block.size:
-                ord_end   = np.argsort(end_block, kind="stable")
-                ends_pos  = end_block[ord_end].astype(np.int32, copy=False)
-                ends_pref = np.cumsum(rcs_block[ord_end], dtype=np.int64)
-            else:
-                ends_pos  = np.empty(0, dtype=np.int32)
-                ends_pref = np.empty(0, dtype=np.int64)
 
-            strand_ch = '-' if strand_i < 0 else '+'
-            index[(chrom, strand_ch)] = {
-                "starts_pos":  starts_pos,
-                "starts_pref": starts_pref,
-                "ends_pos":    ends_pos,
-                "ends_pref":   ends_pref,
-            }
+        e_dict = global_ends_by_chr_strand.get(chr_strand_key, {})
+        if e_dict:
+            # Same for end positions
+            end_positions = np.fromiter(e_dict.keys(),   dtype=np.int32)
+            end_rc_sums   = np.fromiter(e_dict.values(), dtype=np.int64)
+            end_order = np.argsort(end_positions, kind="stable")
+            end_positions = end_positions[end_order]
+            end_rc_sums   = end_rc_sums[end_order]
+            ends_pos  = end_positions.astype(np.int32, copy=False)
+            # Prefix sum of RC at ends: for each position, how many RCs
+            # have finished at or before that coordinate
+            ends_pref = np.cumsum(end_rc_sums, dtype=np.int64)
+        else:
+            ends_pos  = np.empty(0, dtype=np.int32)
+            ends_pref = np.empty(0, dtype=np.int64)
 
-    # Save the index using pickle, like an RDS in R
-    with open(output_index, "wb") as index_file:
-        pickle.dump(index, index_file)
-    print(f"Weighted unique index saved to {output_index}")
+        # Store this (chrom,strand) block in the main index
+        index[(chrom, strand_ch)] = {
+            "starts_pos":  starts_pos,
+            "starts_pref": starts_pref,
+            "ends_pos":    ends_pos,
+            "ends_pref":   ends_pref,
+        }
 
-    # Under development: save numpy-backed index
+    with open(output_index, "wb") as f:
+        pickle.dump(index, f)
+    print(f"Weighted unique LOW-MEM index saved to {output_index}")
+
     try:
         npidx_dir = _save_index_numpy_dir(index, output_index)
         print(f"Also saved numpy index dir to {npidx_dir}")
-    except Exception as err:
-        print(f"Warning: failed to write .npidx index: {err}")
+    except Exception as e:
+        print(f"Warning: failed to write .npidx index: {e}")
 
 
 
 
 #######################################################################################################
-#   Aiming to speed up assigmnet of uwm I will use numba, which is supossed to rich C speed levels
+#   Aiming to speed up assigmnet of uwm I will use numba
 #   The logic is this:
 #   For a window [L, R] and a (chrom, strand) block of UNIQUE reads,
 #   weighted_overlaps = (RC start < R) - (RC end ≤ L)
@@ -902,6 +942,9 @@ def build_weighted_unique_index_from_bams(
 #######################################################################################################
 # This first function will help to get all the elements of the array
 # before R limit
+
+# DEPRECATED (legacy v1): manual binary search helpers.
+# Replaced by np.searchsorted(). Kept temporarily for reference; safe to delete.
 @njit(cache=False, fastmath=True)
 def leftmost_start_at_or_after(positions_sorted, right_edge_R):
     """
@@ -930,6 +973,8 @@ def leftmost_start_at_or_after(positions_sorted, right_edge_R):
     # left_bound now points at the first position >= query_pos.
     return left_bound
 
+# DEPRECATED (legacy v1): manual binary search helpers.
+# Replaced by np.searchsorted(). Kept temporarily for reference; safe to delete.
 # All elements AFTER L, so we can later compute counts inside [L, R)
 @njit(cache=False, fastmath=True)
 def leftmost_end_after(positions_sorted, left_edge_L):
@@ -955,11 +1000,8 @@ def weighted_overlap_in_window(
     end_prefix_rc      # prefix sum of RC aligned to end_coords
 ):
     """
-    Half-open window   -----L----|---->R----
-                               included   excluded
-
     Compute the RC-weighted overlap of UNIQUE reads with [L, R):
-      overlap = (RC of starts where start < R) - (RC of ends where end <= L)
+    overlap = (RC of starts where start < R) - (RC of ends where end <= L)
     """
     if right_edge_R <= left_edge_L:
         return np.int64(0)
@@ -1726,7 +1768,9 @@ def assign_multimappers_randomly(
             sf.write(f"Extended BAM: {output_bam}\n")
             sf.write(f"Random seed: {seed}\n")
             sf.write(f"Run time: {run_time:.2f}\n")
+            
 
+########################################################################################################
     
 def main():
     # Subadd parser for each module, this looks more organized in comparaison to my prevoius CLI
@@ -1748,18 +1792,17 @@ def main():
     p_bt_aln.add_argument("--mismatches", type=int, default=1, help="Bowtie mismatches (default= 1)")
     p_bt_aln.add_argument("--threads", type=int, default=4, help="Threads for bowtie/samtools")
     p_bt_aln.add_argument("--sort-mem", default="2G", help="samtools sort memory per thread (default = 2G)")
-    p_bt_aln.add_argument("--rc-map", help="RC map produced collapse (.tsv file)")
-    p_bt_aln.add_argument("--save-np", choices=["yes", "no"], default="no", help="Save unmapped reads via Bowtie's --un/--un-gz (default=no)")
+    p_bt_aln.add_argument("--rc-map", help="RC map produced collapse (.tsv file for collapse mode)")
+    p_bt_aln.add_argument("--save-np", choices=["yes", "no"], default="no", help="Save unmapped reads via Bowtie --un/--un-gz (default=no)")
     p_bt_aln.add_argument("--non-mappers", help="Output fastq(.gz) for unmapped (used when --save-np yes)")
-    p_bt_aln.add_argument("--max-multimaps", type=int, default=None, help="Cap reported alignments per read: use N to report up to N alignments (-k N).If omitted the script uses Bowtie -a (report all multimappers)",
-    )
+    p_bt_aln.add_argument("--max-multimaps", type=int, default=None, help="Cap reported alignments per read: use N to report up to N alignments. If omitted the script uses Bowtie -a (report all multimappers)")
     
     # Unmapped expansion
-    p_expand_fq = sub.add_parser("expand-fq", help="Expand a collapsed fastq using the RC map (e.g. for unmapped reads)")
+    p_expand_fq = sub.add_parser("expand-fq", help="Expand collapsed fastq using the RC map (e.g. for unmapped reads)")
     p_expand_fq.add_argument("--fastq", required=True, help="Collapsed fastq(.gz) file (e.g. unmapped.collapsed.fastq.gz)")
-    p_expand_fq.add_argument("--rc-map", required=True, help="RC map produced by collapse (tsv or tsv.gz)")
+    p_expand_fq.add_argument("--rc-map", required=True, help="RC map produced by collapse C utility(tsv or tsv.gz)")
     p_expand_fq.add_argument("--out", required=True, help="Output expanded fastq(.gz) file")
-    p_expand_fq.add_argument("--no-suffix", action="store_true", help="Do NOT append _1ofN suffix to read IDs (default: suffix added)")
+    p_expand_fq.add_argument("--no-suffix", action="store_true", help="Do not append _1ofN suffix to read IDs (default: suffix added)")
     
     
     # UWM index
@@ -1876,8 +1919,8 @@ def main():
         )
     # Add threads for parallel version
     elif args.cmd == "build-index-uwm":
-        # build_weighted_unique_index_from_bams(args.bams, args.out)
-        build_weighted_unique_index_from_bams(
+        #build_weighted_unique_index_from_bams(args.bams, args.out) (close to be fully deprecated)
+        build_weighted_unique_index_from_bams_lowmem(
             bam_list_or_bam=args.bams,
             output_index=args.out,
             threads=args.threads,

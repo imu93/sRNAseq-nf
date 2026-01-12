@@ -15,10 +15,18 @@ def BANNER = $/
 log.info("\n${CYAN}${BANNER}${RESET}")
 
 
-// Include the scripts for feature + fisrt nt and test
+// Note: Include the scripts for feature + fisrt nt and test
+
+
+// NEW params for annotations chkp
+params.cfeat	=	params.cfeat	?:	"rRNA,tRNA,gene,DNA,LINE,LTR"
+params.mfeat	=	params.mfeat	?:	1
 
 
 params.reads       = params.reads       ?: "${launchDir}/test/*.fastq.gz"
+
+
+
 params.threads     = params.threads     ?: 2
 params.preproc     = params.preproc     ?: 'legacy'   // 'fastp' or 'legacy'
 params.adapter     = params.adapter     ?: "AGATCGGAAGAG"
@@ -27,7 +35,12 @@ params.minlen      = params.minlen      ?: 18
 params.maxlen      = params.maxlen      ?: 27
 params.map_gate    = params.map_gate    ?: 'none' // 'trure' to save resources, none to skip the gate and increse speed and resorce usge
 params.genome      = params.genome      ?: "${launchDir}/genome/caenorhabditis_elegans.PRJNA13758.WBPS19.genomic.fa"
+
+
 params.annotation  = params.annotation  ?: "${launchDir}/annotation/caenorhabditis_elegans.PRJNA13758.WBP19.overlapping_annotation.gff3"
+
+
+
 params.max_multimaps = params.max_multimaps ?: null
 if (params.max_multimaps != null) {
     try {
@@ -85,6 +98,22 @@ params.consider_strand = params.consider_strand ?: false
 params.assign_mode    = params.assign_mode    ?: 'uwm'   // 'uwm' or 'random'
 params.minoverlap     = params.minoverlap     ?: 0.7
 params.contrast       = params.contrast       ?: "${launchDir}/contrast.txt"
+
+// and the same for the contrast
+if( !params.contrast ) {
+  error "\n[INPUT ERROR] params.contrast is not set\n"
+}
+
+def contrast_file = file(params.contrast)
+
+if( !contrast_file.exists() ) {
+  error "\n[INPUT ERROR] Contrast file not found: ${contrast_file}\n"
+}
+
+if( contrast_file.size() == 0 ) {
+  error "\n[INPUT ERROR] Contrast file is empty: ${contrast_file}\n"
+}
+
 params.lfc            = params.lfc            ?: 1
 params.fdr            = params.fdr            ?: 0.05
 params.threshold_inc   = params.threshold_inc   ?: false   // read FC/FDR from contrast file?
@@ -102,6 +131,7 @@ annotation_ch         = Channel.fromPath(params.annotation)
 contrast_ch           = Channel.fromPath(params.contrast)
 siRmap_script_ch      = Channel.value( file("${params.srcDir}/siRmap.py") )
 collapse_script_ch    = Channel.value( file("${params.srcDir}/collapse") )
+ann_chkp_ch	 	= Channel.fromPath("${params.srcDir}/00.annotation_checkp.R")
 summary_script_uwm_ch   = Channel.fromPath("${params.srcDir}/02.summary_uwm.R")
 summary_script_rand_ch  = Channel.fromPath("${params.srcDir}/02.summary_rand.R")
 bam2Rds_script_ch	= Channel.fromPath("${params.srcDir}/01.bam2Rds.R")
@@ -110,8 +140,37 @@ featureCounts_script_ch = Channel.fromPath("${params.srcDir}/02.featureCounts.R"
 dea_script_ch           = Channel.fromPath("${params.srcDir}/04.edgeR.R")
 
 
+
 def results_dir = "Results_${new Date().format('yyyyMMdd_HHmmss')}"
 new File(results_dir).mkdirs()
+
+process validate_annotation {
+  tag "validate_annotation"
+  label 'preproc'
+
+  input:
+    path ann_chkp
+    path annotation
+
+  output:
+    path "annotation_summary.txt", emit: report
+    path "annotation.validation.ok",  emit: ok
+  
+  
+  publishDir "${results_dir}/00.ann_rep", mode: 'copy'
+    
+    
+  script:
+  """
+  Rscript ${ann_chkp} -i ${annotation} \
+  		      -c "${params.cfeat}" \
+  		      -m ${params.mfeat} \
+  		      -o annotation_summary.txt
+
+  touch annotation.validation.ok
+  """
+}
+
 
 
 process fastp {
@@ -841,8 +900,10 @@ process edgeR_dea {
     """
 }
 
-workflow {  
-
+workflow {
+  
+  validate_annotation(ann_chkp_ch, annotation_ch)
+   
   def map_inputs_ch
   def rc_map_ch
   if ( params.preproc == 'fastp' ) {
@@ -872,7 +933,7 @@ workflow {
     }
 
   } else {
-   
+     
     fastqc_raw = fastqc(reads_ch)
     multiqc( fastqc_raw.qc_zip.collect() )
 

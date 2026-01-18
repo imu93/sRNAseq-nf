@@ -21,25 +21,17 @@ log.info("\n${CYAN}${BANNER}${RESET}")
 // NEW params for annotations chkp
 params.cfeat	=	params.cfeat	?:	"rRNA,tRNA,gene,DNA,LINE,LTR"
 params.mfeat	=	params.mfeat	?:	1
-
-
 params.reads       = params.reads       ?: "${launchDir}/test/*.fastq.gz"
-
-
-
 params.threads     = params.threads     ?: 2
 params.preproc     = params.preproc     ?: 'legacy'   // 'fastp' or 'legacy'
 params.adapter     = params.adapter     ?: "AGATCGGAAGAG"
 params.fastp_use_adapter = (params.fastp_use_adapter != null ? params.fastp_use_adapter : false)
+params.disable_length_filter = (params.disable_length_filter != null   ? params.disable_length_filter.toString().toLowerCase() in ['true','1','yes','y'] : false)
 params.minlen      = params.minlen      ?: 18
 params.maxlen      = params.maxlen      ?: 27
 params.map_gate    = params.map_gate    ?: 'none' // 'trure' to save resources, none to skip the gate and increse speed and resorce usge
 params.genome      = params.genome      ?: "${launchDir}/genome/caenorhabditis_elegans.PRJNA13758.WBPS19.genomic.fa"
-
-
 params.annotation  = params.annotation  ?: "${launchDir}/annotation/caenorhabditis_elegans.PRJNA13758.WBP19.overlapping_annotation.gff3"
-
-
 
 params.max_multimaps = params.max_multimaps ?: null
 if (params.max_multimaps != null) {
@@ -113,7 +105,8 @@ if( !contrast_file.exists() ) {
 if( contrast_file.size() == 0 ) {
   error "\n[INPUT ERROR] Contrast file is empty: ${contrast_file}\n"
 }
-
+params.fn_reps        = (params.fn_reps != null ? params.fn_reps.toString().toLowerCase() in ['true','1','yes','y'] : false)
+params.fn_all_lengths = (params.fn_all_lengths != null ? params.fn_all_lengths.toString().toLowerCase() in ['true','1','yes','y'] : false)
 params.lfc            = params.lfc            ?: 1
 params.fdr            = params.fdr            ?: 0.05
 params.threshold_inc   = params.threshold_inc   ?: false   // read FC/FDR from contrast file?
@@ -123,6 +116,11 @@ params.disable_tmm_for_fbn = params.disable_tmm_for_fbn  ?: false   // if true: 
 params.stringent_tmm  = params.stringent_tmm  ?: false   // boolean
 params.use_rds        = params.use_rds        ?: true   // boolean
 params.first_nt       = params.first_nt       ?: ""
+params.make_complex_plots = (params.make_complex_plots != null ? params.make_complex_plots.toString().toLowerCase() in ['true','1','yes','y'] : false)
+params.require_assigned = (params.require_assigned != null ? params.require_assigned.toString().toLowerCase() in ['true','1','yes','y'] : false)
+
+
+
 params.apply_first_nt_downstream = params.apply_first_nt_downstream ?: false
 params.srcDir         = "${workflow.projectDir}/bin"
 reads_ch              = Channel.fromPath(params.reads)
@@ -137,6 +135,9 @@ summary_script_rand_ch  = Channel.fromPath("${params.srcDir}/02.summary_rand.R")
 bam2Rds_script_ch	= Channel.fromPath("${params.srcDir}/01.bam2Rds.R")
 fnmtx_script_ch         = Channel.fromPath("${params.srcDir}/02.get_fn_mtx.R")
 featureCounts_script_ch = Channel.fromPath("${params.srcDir}/02.featureCounts.R")
+fcComplex_script_ch     = Channel.fromPath("${params.srcDir}/03.fcComplex.R")
+cls_mtx_script_ch       = Channel.fromPath("${params.srcDir}/03.cls_mtx.py")
+fn_cls_script_ch        = Channel.fromPath("${params.srcDir}/03.complex_plot.R")
 dea_script_ch           = Channel.fromPath("${params.srcDir}/04.edgeR.R")
 
 
@@ -199,19 +200,23 @@ process fastp {
     ADAPTER_OPT="--adapter_sequence ${params.adapter}"
   fi
 
+  LEN_OPT=""
+if [ "${params.disable_length_filter}" != "true" ]; then
+  LEN_OPT="--length_required ${params.minlen} --length_limit ${params.maxlen}"
+fi
+
   fastp \
-  -i ${read} \
-  -o "\${base}.ps.fastq.gz" \
-  --length_required ${params.minlen} \
-  --length_limit ${params.maxlen} \
-  -e 25 \
-  -q 20 \
-  -u 10 \
-  -n 1 \
-  -w ${params.threads} \
-  -h "\${base}.html" \
-  -j "\${base}.json" \
-  \$ADAPTER_OPT
+    -i ${read} \
+    -o "\${base}.ps.fastq.gz" \
+    \$LEN_OPT \
+    -e 25 \
+    -q 20 \
+    -u 10 \
+    -n 1 \
+    -w ${params.threads} \
+    -h "\${base}.html" \
+    -j "\${base}.json" \
+    \$ADAPTER_OPT
 
   """
 }
@@ -283,12 +288,17 @@ process cutadapt { label 'preproc'
 
     script:
     """
-    cutadapt -j ${params.threads} \
-             -a ${params.adapter} \
-             -m ${params.minlen} \
-             --max-n 0.05 \
-             --discard-untrimmed \
-             -o ${read.simpleName}.trimmed.fastq.gz ${read}
+  MINLEN_OPT=""
+  if [ "${params.disable_length_filter}" != "true" ]; then
+    MINLEN_OPT="-m ${params.minlen}"
+  fi
+
+  cutadapt -j ${params.threads} \
+           -a ${params.adapter} \
+           \$MINLEN_OPT \
+           --max-n 0.05 \
+           --discard-untrimmed \
+           -o ${read.simpleName}.trimmed.fastq.gz ${read}
     """
 }
 
@@ -370,11 +380,15 @@ process pullseq_raw {
   base=\${base%.fq}
   base=\${base%.fq.gz}
 
-  pullseq -i ${read} -m ${params.minlen} -a ${params.maxlen} > "\${base}.ps.fastq"
-  pigz "\${base}.ps.fastq"
+  if [ "${params.disable_length_filter}" = "true" ]; then
+    # passthrough sin pullseq (pullseq requiere alguna opción tipo -m/-n/-g)
+    zcat ${read} | pigz > "\${base}.ps.fastq.gz"
+  else
+    pullseq -i ${read} -m ${params.minlen} -a ${params.maxlen} > "\${base}.ps.fastq"
+    pigz "\${base}.ps.fastq"
+  fi
   """
 }
-
 
 process pullseq {
   label 'preproc'
@@ -393,8 +407,12 @@ process pullseq {
   base='${read.simpleName}'
   base=\${base%.fastq}
 
-  pullseq -i ${read} -m ${params.minlen} -a ${params.maxlen} > "\${base}.ps.fastq"
-  pigz "\${base}.ps.fastq"
+  if [ "${params.disable_length_filter}" = "true" ]; then
+    zcat ${read} | pigz > "\${base}.ps.fastq.gz"
+  else
+    pullseq -i ${read} -m ${params.minlen} -a ${params.maxlen} > "\${base}.ps.fastq"
+    pigz "\${base}.ps.fastq"
+  fi
   """
 }
 
@@ -598,7 +616,7 @@ process build_unique_index {
   printf "%s\n" ${bam_paths.join(' ')} | tr ' ' '\\n' > bam_list.txt
   python ${siRmap_script} build-index-uwm \
                           --bams bam_list.txt \
-                          --thread ${params.index_thr} \
+                          --threads ${params.index_thr} \
                           --out unique_index.pkl 
   """
 }
@@ -698,39 +716,35 @@ process firstnt_counts {
   """
   base=\$(basename "${bam}" .bam)
   out="\${base}.firstnt.tsv"
-  samtools view -h -F 0x904 -@ ${params.threads} "${bam}" \
-  | awk -v MIN=${params.minlen} -v MAX=${params.maxlen} '
-      BEGIN { }
-      /^@/ { next }
-      {
-        seq = toupper(\$10)
-        l = length(seq)
-        if (l < MIN || l > MAX) next
+  samtools view -h -F 0x904 -@ ${params.threads} "${bam}" \\
+| awk -v DISABLE="${params.disable_length_filter}" -v MIN=${params.minlen} -v MAX=${params.maxlen} '
+    function comp(b){ return (b=="A"?"T": b=="C"?"G": b=="G"?"C": b=="T"?"A": b) }
+    /^@/ { next }
+    {
+      seq=toupper(\$10); l=length(seq)
+      if (DISABLE!="true" && (l<MIN || l>MAX)) next
 
-        flag = \$2 + 0
-        b = substr(seq,1,1)
+      b=substr(seq,1,1)
+      if (and(\$2,16)) b=comp(substr(seq,l,1))
 
-        if ( int(flag/16) % 2 == 1 ) {
-          last = substr(seq,l,1)
-          b = (last=="A"?"T": last=="C"?"G": last=="G"?"C": last=="T"?"A": last)
-        }
-
-        if (b=="A"||b=="C"||b=="G"||b=="T") {
-          cnt[l ":" b]++
-          tot[l]++
-        }
+      if (b=="A"||b=="C"||b=="G"||b=="T") { cnt[l ":" b]++; tot[l]++ }
+    }
+    END{
+      print "sample\\tlength\\tA\\tC\\tG\\tT\\ttotal"
+      # gather lengths
+      for (x in tot) lens[x]=1
+      n=0
+      for (x in lens) { L[++n]=x }
+      # sort numeric
+      for (i=1;i<=n;i++) for (j=i+1;j<=n;j++) if (L[i]+0 > L[j]+0) { tmp=L[i]; L[i]=L[j]; L[j]=tmp }
+      for (i=1;i<=n;i++){
+        l=L[i]
+        a=cnt[l ":A"]+0; c=cnt[l ":C"]+0; g=cnt[l ":G"]+0; t=cnt[l ":T"]+0
+        print "__SAMPLE__\\t" l "\\t" a "\\t" c "\\t" g "\\t" t "\\t" (tot[l]+0)
       }
-      END {
-        print "sample\\tlength\\tA\\tC\\tG\\tT\\ttotal"
-        for (l=MIN; l<=MAX; l++) {
-          a = cnt[l ":A"] + 0
-          c = cnt[l ":C"] + 0
-          g = cnt[l ":G"] + 0
-          t = cnt[l ":T"] + 0
-          print "__SAMPLE__\\t" l "\\t" a "\\t" c "\\t" g "\\t" t "\\t" (tot[l]+0)
-        }
-      }
-    ' > "\$out.tmp"
+    }
+  ' > "\$out.tmp"
+
 
   sed "s/^__SAMPLE__/\${base}/" "\$out.tmp" > "\$out"
   rm -f "\$out.tmp"
@@ -756,20 +770,31 @@ process fn_mtx {
 
 process plot_firstnt {
   tag "Plot first nucleotide distributions"
+  label 'preproc'
 
   input:
-    path tables   
+    path tables
 
   output:
-    path "length_dit_fn_percentage.png", emit: png_percentage
+    path "length_dit_fn_percentage.png",       emit: avg_png
+    path "length_dit_fn_percentage.reps.png",  emit: reps_png, optional: true
 
   publishDir "${results_dir}/09.fn_plots", mode: 'copy'
 
   script:
+  def repsFlag = params.fn_reps ? '--reps TRUE' : ''
+  def allFlag  = params.fn_all_lengths ? '--all_lengths TRUE' : ''
+  def minFlag  = "--min ${params.minlen}"
+  def maxFlag  = "--max ${params.maxlen}"
+
   """
-  Rscript ${params.srcDir}/03.plot_fn.R ${params.minlen} ${params.maxlen} "*.firstnt.tsv"
+  Rscript ${params.srcDir}/03.plot_fn.R \
+    ${minFlag} ${maxFlag} \
+    ${repsFlag} \
+    ${allFlag}
   """
 }
+
 
 
 process filter_firstnt {
@@ -836,6 +861,77 @@ process featureCounts {
     Rscript ${featureCounts_script} ${annotation} ${params.minoverlap} ${params.thr_sm} ${bam_files.join(" ")}
     """
 }
+
+
+process featureCounts_tagBam {
+  tag "featureCounts (tagged BAM)"
+  when:
+    params.make_complex_plots
+
+  input:
+    path bam_files
+    path annotation
+    path fcComplex_script
+
+  output:
+    path "*.featureCounts.bam", emit: tagged_bams
+    path "*.log", optional: true
+
+  publishDir "${results_dir}/11.featureCounts_tagged", mode: 'copy'
+
+  script:
+  """
+  Rscript ${fcComplex_script} ${annotation} ${params.minoverlap} ${params.thr_sm} ${bam_files.join(" ")}
+  """
+}
+
+process cls_mtx {
+  tag "Class matrix (cls_mtx)"
+  when:
+    params.make_complex_plots
+
+  input:
+    path bams
+    path cls_mtx_script
+
+  output:
+    path "*.cls_mtx.tsv", emit: cls_tables
+
+  publishDir "${results_dir}/11.featureCounts_tagged", mode: 'copy'
+
+  script:
+    def lenArgs     = params.disable_length_filter ? "--all-lengths" : "--minlen ${params.minlen} --maxlen ${params.maxlen}"
+    def assignedArg = params.require_assigned ? "--require-assigned" : ""
+    """
+    python ${cls_mtx_script} \
+      --bam ${bams.join(' ')} \
+      --suffix ".cls_mtx.tsv" \
+      ${lenArgs} \
+      ${assignedArg}
+    """
+}
+
+process fn_cls{
+  tag "Complex plot (fn_cls)"
+
+  when:
+    params.make_complex_plots
+
+  input:
+    tuple val(id), path(fn_tables), path(cls_tables)
+
+  output:
+    path "fn_cls_cpm.png", emit: avg_png
+
+  publishDir "${results_dir}/09.fn_plots", mode: 'copy'
+
+  script:
+  """
+  Rscript ${params.srcDir}/03.complex_plot.R ${fn_tables.join(" ")} ${cls_tables.join(" ")}
+  """
+}
+
+
 
 process bam2bedgraph {
     tag "${bam_file.simpleName}"
@@ -1059,6 +1155,7 @@ workflow {
   def counts_out = firstnt_counts(resolved_bams_ch)
     def all_counts = counts_out.counts.collect()
     plot_firstnt(all_counts)
+    def all_fn = all_counts.map { files -> tuple('all', files) }
   
 
   if( !params.apply_first_nt_downstream ) {
@@ -1075,6 +1172,20 @@ workflow {
   }
   fc = featureCounts(bams_for_quant.collect(), annotation_ch, featureCounts_script_ch)
   counts_only = fc.table_of_counts.filter { it.name == 'featureCounts_counts.txt' }
+
+  
+  if (params.make_complex_plots) {
+    fc_bam = featureCounts_tagBam(bams_for_quant.collect(), annotation_ch, fcComplex_script_ch)
+
+    def cls_out = cls_mtx(fc_bam.tagged_bams.collect(), cls_mtx_script_ch)
+
+    def all_cls = cls_out.cls_tables.collect()
+                  .map { files -> tuple('all', files) }
+
+    fn_cls( all_fn.join(all_cls) )
+  }
+
+
   if (params.make_bedgraph) {
   bam2bedgraph(bams_for_quant)
   log.info "bedGraph generation: enabled"

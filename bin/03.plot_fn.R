@@ -1,12 +1,31 @@
-pacman::p_load(ggplot2, dplyr, stringr, reshape2, tidyr, tibble, purrr)
-args = commandArgs(trailingOnly = TRUE)
-min_length = as.integer(args[1])
-max_length = as.integer(args[2])
+pacman::p_load(ggplot2, dplyr, stringr, reshape2, tidyr, tibble, purrr, optparse)
+
+# Variables
+option_list = list(
+  make_option(c("--min"), type="numeric", default=18,
+              help= "Min read length", metavar="character"),
+  make_option(c("--max"), type="numeric", default=27, 
+              help= "Max read length", metavar="character"),
+  make_option(c("--reps"), type="logical", default = FALSE,
+              help = "Plots per replicate",
+              metavar = "logical"),
+  make_option(c("--all_lengths"), type="logical", default = FALSE,
+              help = "Analyze full observed length range (ignore --min/--max)",
+              metavar = "logical")
+); 
+
+# Parse args
+opt_parser = OptionParser(option_list=option_list);
+opt = parse_args(opt_parser);
+all_lengths = opt$all_lengths
+min_length = opt$min
+max_length = opt$max
+reps = opt$reps
 
 files = list.files(pattern = "expanded.firstnt.tsv")
 tabs = lapply(files, function(x){read.table(x, sep = "\t", header = T)})
 #tabs = tabs[grepl("Ip", names(tabs))]
-names(tabs) = sub(".ps.fastq.collapsed.expanded.firstnt.tsv", "", files) 
+names(tabs) = sub(".expanded.firstnt.tsv", "", files) 
 
 tabs = lapply(tabs, function(m) {
   m[is.na(m)] <- 0
@@ -40,6 +59,11 @@ tabs = NULL
 
 # Bind gorups of libraries based on their condition (ID)
 all_df = bind_rows(f_lst, .id = "sample")
+
+if (all_lengths) {
+  min_length <- min(all_df$length, na.rm = TRUE)
+  max_length <- max(all_df$length, na.rm = TRUE)
+}
 
 # Build final tibble using average values per condition 
 df = all_df %>%
@@ -89,13 +113,19 @@ len_span = max_length - min_length + 1
 
 # per-panel dimensions (inches)
 # base width grows with length span so long x-axes get more room
-panel_width  <- 2.5 + len_span * 0.06   
-panel_height <- 4 
+panel_width  = 2.5 + len_span * 0.06   
+panel_height = 4 
 
 # Figure size
 plot_width  = panel_width  * ncol_facets
 plot_height = panel_height * nrow_facets
 
+# Facet strip size
+strip_size = 12
+strip_size = strip_size - 2.5 * log10(n_panels)
+strip_size = strip_size - 1.0 * (ncol_facets - 2)
+strip_size = strip_size - 0.03 * (len_span - 10)
+strip_size = max(9, min(18, strip_size))
 
 # Fn plots
 # By percentage
@@ -112,7 +142,7 @@ percetage_plot =df %>%
     axis.title = element_text(size = 16), 
     legend.position = "bottom",
     legend.text = element_text(size = 14),
-    strip.text = element_text(size = 18), 
+    strip.text = element_text(size = strip_size), 
     plot.margin = unit(c(0.5, 0.5, 0.5, 0.5), "inches")
   ) +
   scale_x_discrete(breaks = tick_lengths)
@@ -126,3 +156,79 @@ ggsave(
   height = plot_height,
   dpi = 300
 )
+
+################################################################################
+# Same but for per-replicate
+if (reps == TRUE) {
+  
+  df_rep = tab_counts %>%
+    mutate(ID = sub("_[^_]*$","", sample)) %>%  
+    group_by(sample, length, nt) %>%
+    summarise(count = sum(count), .groups = "drop") %>%
+    group_by(sample) %>%
+    mutate(percentage = 100 * count / sum(count)) %>%
+    ungroup()
+  
+  df_rep = df_rep %>% filter(length >= min_length, length <= max_length)
+  
+  if (nrow(df_rep) == 0) {
+    message(sprintf("No rows left for replicate plot (length %d-%d). Skipping.", min_length, max_length))
+  } else {
+    
+    df_rep$nt = gsub("T", "U", df_rep$nt)
+    df_rep$nt = factor(df_rep$nt, levels = c("G", "U", "A", "C"))
+    
+    df_rep$length = as.character(df_rep$length)
+    df_rep$length = factor(df_rep$length, levels = as.character(min_length:max_length))
+    
+    tick_lengths = as.character(seq(min_length, max_length, 2))
+    tick_lengths = intersect(tick_lengths, levels(df_rep$length))
+    
+    n_panels = length(unique(df_rep$sample))
+    ncol_facets = ceiling(sqrt(n_panels))
+    nrow_facets = ceiling(n_panels / ncol_facets)
+    
+    len_span = max_length - min_length + 1
+    panel_width  = 2.5 + len_span * 0.06
+    panel_height = 4
+    plot_width  = panel_width  * ncol_facets
+    plot_height = panel_height * nrow_facets
+    
+    strip_size = 16
+    strip_size = strip_size - 2.5 * log10(n_panels)
+    strip_size = strip_size - 1.0 * (ncol_facets - 2)
+    strip_size = strip_size - 0.03 * (len_span - 10)
+    strip_size = max(9, min(18, strip_size))
+    
+    
+    
+    perc_plot_rep = df_rep %>%
+      ggplot(aes(x = length, y = percentage, fill = nt)) +
+      geom_bar(stat = "identity") +
+      facet_wrap(~ sample, ncol = ncol_facets) +
+      scale_fill_manual(values = colors, name = "5' nt") +
+      theme_test() +
+      ylab("% of reads") +
+      xlab("Length") +
+      theme(
+        axis.text  = element_text(size = 12),
+        axis.title = element_text(size = 16),
+        legend.position = "bottom",
+        legend.text = element_text(size = 14),
+        strip.text = element_text(size = strip_size),
+        plot.margin = unit(c(0.5, 0.5, 0.5, 0.5), "inches")
+      ) +
+      scale_x_discrete(breaks = tick_lengths)
+    
+    ggsave(
+      "length_dit_fn_percentage.reps.png",
+      device = "png",
+      path = "./",
+      plot = perc_plot_rep,
+      width = plot_width,
+      height = plot_height,
+      dpi = 300
+    )
+  }
+  
+}

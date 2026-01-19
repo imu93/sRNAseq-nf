@@ -104,9 +104,32 @@ for (i in names(groups)) {
     counts_lts[[fn_lib]] = tmp.mlt
   }
   
+  all_ids = Reduce(union, lapply(counts_lts, rownames))
+  all_ids = sort(all_ids)
+  
+  counts_lts = lapply(counts_lts, function(df) {
+    miss = setdiff(all_ids, rownames(df))
+    if (length(miss) > 0) {
+      add = data.frame(
+        value = rep(0, length(miss)),
+        row.names = miss
+      )
+      colnames(add) = colnames(df)   # keep the library name as the column name
+      df = rbind(df, add)
+    }
+    df[all_ids, , drop = FALSE]
+  })
+  
+  
   tmp.counts = do.call(cbind, counts_lts)
-  tmp.counts[is.na(tmp.counts)] = 0
+  tmp.counts[is.na(tmp.counts)] <- 0
+  tmp.counts = as.matrix(tmp.counts)
+  storage.mode(tmp.counts) = "numeric"
+  
   mtx_cpm = edgeR::cpm(tmp.counts)
+  
+  
+ 
   
   libs_nt = list()
   for (exp in colnames(mtx_cpm)) {

@@ -118,9 +118,6 @@ params.use_rds        = params.use_rds        ?: true   // boolean
 params.first_nt       = params.first_nt       ?: ""
 params.make_complex_plots = (params.make_complex_plots != null ? params.make_complex_plots.toString().toLowerCase() in ['true','1','yes','y'] : false)
 params.require_assigned = (params.require_assigned != null ? params.require_assigned.toString().toLowerCase() in ['true','1','yes','y'] : false)
-
-
-
 params.apply_first_nt_downstream = params.apply_first_nt_downstream ?: false
 params.srcDir         = "${workflow.projectDir}/bin"
 reads_ch              = Channel.fromPath(params.reads)
@@ -171,8 +168,6 @@ process validate_annotation {
   touch annotation.validation.ok
   """
 }
-
-
 
 process fastp {
   label 'preproc'
@@ -275,21 +270,26 @@ process multiqc { label 'preproc'
     """
 }
 
-process cutadapt { label 'preproc'
-    input:
+process cutadapt {
+  label 'preproc'
+
+  input:
     path read
 
-    output:
+  output:
     path "*trimmed.fastq.gz", emit: fastq
 
-    publishDir "${results_dir}/02.cut_adapt", mode: 'copy'
+  publishDir "${results_dir}/02.cut_adapt", mode: 'copy'
+  tag "${read.simpleName}"
 
-    tag "${read.simpleName}"
-
-    script:
-    """
+  script:
+  """
   MINLEN_OPT=""
-  if [ "${params.disable_length_filter}" != "true" ]; then
+  if [ "${params.disable_length_filter}" = "true" ]; then
+    # minimo tecnico para evitar reads vacíos (len=0) que crashean bowtie
+    MINLEN_OPT="-m 10"
+  else
+    # filtro normal (biologico)
     MINLEN_OPT="-m ${params.minlen}"
   fi
 
@@ -298,9 +298,11 @@ process cutadapt { label 'preproc'
            \$MINLEN_OPT \
            --max-n 0.05 \
            --discard-untrimmed \
-           -o ${read.simpleName}.trimmed.fastq.gz ${read}
-    """
+           -o ${read.simpleName}.trimmed.fastq.gz \
+           ${read}
+  """
 }
+
 
 process fastqc_trimm { label 'preproc'
     input:
@@ -380,13 +382,29 @@ process pullseq_raw {
   base=\${base%.fq}
   base=\${base%.fq.gz}
 
+ 
   if [ "${params.disable_length_filter}" = "true" ]; then
-    # passthrough sin pullseq (pullseq requiere alguna opción tipo -m/-n/-g)
-    zcat ${read} | pigz > "\${base}.ps.fastq.gz"
+    read MIN MAX < <(
+      zcat ${read} | awk 'NR%4==2{l=length(\$0); if(min==""||l<min)min=l; if(max==""||l>max)max=l} END{print min, max}'
+    )
+    if [ -z "\$MIN" ] || [ -z "\$MAX" ]; then
+      echo "ERROR: could not infer read lengths" >&2
+      exit 1
+    fi
+    # pullseq requiere MAX > MIN
+    if [ "\$MAX" -le "\$MIN" ]; then
+      MAX=\$((MIN+1))
+    fi
   else
-    pullseq -i ${read} -m ${params.minlen} -a ${params.maxlen} > "\${base}.ps.fastq"
-    pigz "\${base}.ps.fastq"
+    MIN=${params.minlen}
+    MAX=${params.maxlen}
   fi
+
+  # --- SIEMPRE darle a pullseq un FASTQ plano
+  zcat ${read} > "\${base}.in.fastq"
+  pullseq -i "\${base}.in.fastq" -m \$MIN -a \$MAX > "\${base}.ps.fastq"
+  rm -f "\${base}.in.fastq"
+  pigz "\${base}.ps.fastq"
   """
 }
 
@@ -406,13 +424,34 @@ process pullseq {
   """
   base='${read.simpleName}'
   base=\${base%.fastq}
+  base=\${base%.fastq.gz}
+  base=\${base%.fq}
+  base=\${base%.fq.gz}
 
+ 
   if [ "${params.disable_length_filter}" = "true" ]; then
-    zcat ${read} | pigz > "\${base}.ps.fastq.gz"
+    read MIN MAX < <(
+      zcat ${read} | awk 'NR%4==2{l=length(\$0); if(min==""||l<min)min=l; if(max==""||l>max)max=l} END{print min, max}'
+    )
+    if [ -z "\$MIN" ] || [ -z "\$MAX" ]; then
+      echo "ERROR: could not infer read lengths" >&2
+      exit 1
+    fi
+    # pullseq requiere MAX > MIN
+    if [ "\$MAX" -le "\$MIN" ]; then
+      MAX=\$((MIN+1))
+    fi
   else
-    pullseq -i ${read} -m ${params.minlen} -a ${params.maxlen} > "\${base}.ps.fastq"
-    pigz "\${base}.ps.fastq"
+    MIN=${params.minlen}
+    MAX=${params.maxlen}
   fi
+
+  # --- SIEMPRE darle a pullseq un FASTQ plano
+  zcat ${read} > "\${base}.in.fastq"
+  pullseq -i "\${base}.in.fastq" -m \$MIN -a \$MAX > "\${base}.ps.fastq"
+  rm -f "\${base}.in.fastq"
+  pigz "\${base}.ps.fastq"
+
   """
 }
 

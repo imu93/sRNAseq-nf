@@ -1,3 +1,4 @@
+setwd("/home/isaac/test")
 pacman::p_load(
   ggplot2, ggpubr, pals, reshape2, scales, dplyr, purrr, edgeR, tibble, stringr, grid
 )
@@ -26,7 +27,7 @@ names(cls) = sub("\\..*", "", cls_files)
 
 groups = names(fn) %>%
   strsplit("_") %>%
-  map(function(x) paste(x[c(1,2,3)], collapse = "_")) %>%
+  map(function(x) paste(x[c(1,2,3,4)], collapse = "_")) %>%
   unlist() %>%
   unique()
 names(groups) = groups
@@ -98,7 +99,7 @@ for (i in names(groups)) {
     tmp.mlt = melt(tmp.lib)
     rownames(tmp.mlt) = paste0(tmp.mlt$variable, "_", tmp.mlt$len)
     
-    tmp.mlt = dplyr::select(tmp.mlt, value)
+    tmp.mlt = select(tmp.mlt, value)
     colnames(tmp.mlt) = fn_lib
     
     counts_lts[[fn_lib]] = tmp.mlt
@@ -137,10 +138,10 @@ for (i in names(groups)) {
     
     cpm_mtx = as.data.frame(x) %>%
       tibble::rownames_to_column(var = "rownames") %>%
-      dplyr::mutate(first_char = substr(rownames, 1, 1)) %>%
-      dplyr::group_split(first_char) %>%
+      mutate(first_char = substr(rownames, 1, 1)) %>%
+      group_split(first_char) %>%
       setNames(c("df_A", "df_C", "df_G", "df_T")) %>%
-      lapply(function(z) dplyr::select(z, c(1,2))) %>%
+      lapply(function(z) select(z, c(1,2))) %>%
       do.call(cbind, .)
     
     rownames(cpm_mtx) = sub(".*_", "", cpm_mtx$df_A.rownames)
@@ -248,16 +249,48 @@ for (i in names(groups)) {
 }
 
 for (i in names(groups)) {
-  message(i)
-  
+    
   libs = cls[grepl(groups[[i]], names(cls))]
+  all_rows = Reduce(union, lapply(libs, rownames))
+  all_rows = sort(as.numeric(all_rows))
+  all_rows_chr = as.character(all_rows)
+  
+  all_cols = Reduce(union, lapply(libs, colnames))
+  all_cols = sort(all_cols)
+  
+  libs = lapply(libs, function(df) {
+    df = as.data.frame(df)
+    
+    # add missing columns
+    miss_c = setdiff(all_cols, colnames(df))
+    if (length(miss_c) > 0) {
+      for (cc in miss_c) df[[cc]] <- 0
+    }
+    df = df[, all_cols, drop = FALSE]
+    
+    # add missing rows
+    miss_r = setdiff(all_rows_chr, rownames(df))
+    if (length(miss_r) > 0) {
+      add = matrix(0, nrow = length(miss_r), ncol = ncol(df),
+                    dimnames = list(miss_r, colnames(df)))
+      df = rbind(df, add)
+    }
+    
+    df[all_rows_chr, , drop = FALSE]
+  })
+  
   
   mean_fn = Reduce("+", libs) / length(libs)
   mean_fn = as.data.frame(mean_fn)
   
-  colnames(mean_fn) = sub("gene", "Protein-coding", colnames(mean_fn))
-  colnames(mean_fn) = sub("DNA", "Transposon", colnames(mean_fn))
-  colnames(mean_fn) = sub("LTR|LINE", "Retrotransposon", colnames(mean_fn))
+  colnames(mean_fn) = sub("^gene", "Protein-coding", colnames(mean_fn))
+  colnames(mean_fn) = sub("DNA|RC", "Transposon", colnames(mean_fn))
+  colnames(mean_fn) = sub("LTR|LINE|PLE|Ple|Retro", "Retrotransposon", colnames(mean_fn))
+  
+  if (any(duplicated(colnames(mean_fn)))) {
+    mean_fn = as.data.frame(mean_fn)
+    mean_fn = t(rowsum(t(mean_fn), group = colnames(mean_fn))) %>%  as.data.frame()
+  }
   
   len_cls = sort(as.numeric(rownames(mean_fn)))
   len_seq = seq(min(len_cls), max(len_cls), by = 1)
@@ -300,6 +333,22 @@ for (i in names(groups)) {
   exp = groups[[i]]
   mean_fn_long$exp = exp
   prop_fn_long$exp = exp
+  
+  qc_sum100 = prop_fn_long %>%
+    group_by(exp, Length) %>%
+    summarise(sum_pct = sum(Reads), .groups = "drop") %>%
+    mutate(diff = sum_pct - 100)
+  
+  print(summary(qc_sum100$sum_pct))
+  
+  bad = qc_sum100 %>% filter(abs(diff) > 1e-6)
+  if (nrow(bad) > 0) {
+    message("WARNING: some Length bins do not sum to 100%")
+    print(head(bad, 20))
+  } else {
+    message("OK: all Length bins sum to 100%")
+  }
+  
   
   mean_p = ggplot(mean_fn_long, aes(x = Length, y = Reads, fill = Class)) +
     geom_col() +

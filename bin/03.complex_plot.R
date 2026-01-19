@@ -1,4 +1,3 @@
-setwd("/home/isaac/test")
 pacman::p_load(
   ggplot2, ggpubr, pals, reshape2, scales, dplyr, purrr, edgeR, tibble, stringr, grid
 )
@@ -459,3 +458,4 @@ ggsave(
   dpi = 300,
   bg = "white"
 )
+

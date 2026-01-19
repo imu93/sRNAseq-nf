@@ -12,6 +12,7 @@ import polars as pl
 
 _CATS = [
     "gene",
+    "pseudogene"
     "DNA",
     "LTR",
     "LINE",
@@ -41,7 +42,7 @@ _RULES = [
     ("snRNA",        re.compile(r"^snRNA", re.IGNORECASE)),
     ("snoRNA",       re.compile(r"^snoRNA", re.IGNORECASE)),
     ("lincRNA",      re.compile(r"^lincRNA", re.IGNORECASE)),
-    ("rRNA",         re.compile(r"_rRNA|LSU", re.IGNORECASE)),
+    ("rRNA",         re.compile(r"^rRNA|_rRNA|LSU", re.IGNORECASE)),
     ("tRNA",         re.compile(r"^tRNA", re.IGNORECASE)),
     ("Other_repeat", re.compile(r"Sat|Low|Simple|SINE", re.IGNORECASE)),
     ("Other_ncRNA",  re.compile(r"^yRNA|^lncRNA|other_ncRNA|circRNA", re.IGNORECASE)),

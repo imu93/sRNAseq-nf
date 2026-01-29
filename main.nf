@@ -1017,7 +1017,7 @@ process edgeR_dea {
     publishDir "${results_dir}/13.edgeR", mode: 'copy'
 
     script:
-    def fbnFlag = params.disable_tmm_for_fbn ? '--disable_tmm_for_fbn' : ''
+    def fbnFlag = params.disable_tmm_for_fbn ? 'TRUE' : 'FALSE'
     def STRICT = params.stringent_tmm ? 'TRUE' : 'FALSE'
     def HKNORM = params.hk_norm ? 'TRUE' : 'FALSE'
     def TRESH  = params.threshold_inc ? 'TRUE' : 'FALSE' 
@@ -1031,7 +1031,8 @@ process edgeR_dea {
       --hk_norm ${HKNORM} \
       --norm_feature '${params.norm_feature}' \
       --stringent_tmm ${STRICT} \
-      ${fbnFlag}
+      --disable_tmm_for_fbn ${fbnFlag}
+      
     """
 }
 

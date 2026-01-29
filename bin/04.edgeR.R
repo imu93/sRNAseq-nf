@@ -64,11 +64,10 @@ if (grepl("\\|", normFeature)) {
 }
 
 strict = as.logical(opt$stringent_tmm)
-all_cat_norm =  as.logical(opt$disable_tmm_for_fbn)
+all_cat_norm =  isTRUE(opt$disable_tmm_for_fbn)
 cot_file = opt$contrast_file
 hk_norm = as.logical(opt$hk_norm)
 
-  
 ##################################################################################
 # Inpath and featureCounts table
 if (is.null(opt$counts_file)) stop("--counts_file is required", call.=FALSE)

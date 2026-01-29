@@ -2,6 +2,7 @@ pacman::p_load(
   ggplot2, ggpubr, pals, reshape2, scales, dplyr, purrr, edgeR, tibble, stringr, grid
 )
 
+
 fn_files  = list.files(pattern = ".expanded.firstnt.tsv")
 cls_files = list.files(pattern = ".cls_mtx.tsv")
 
@@ -26,17 +27,18 @@ names(cls) = sub("\\..*", "", cls_files)
 
 groups = names(fn) %>%
   strsplit("_") %>%
-  map(function(x) paste(x[c(1,2,3,4)], collapse = "_")) %>%
+  map(function(x) paste(x[c(1,2,3)], collapse = "_")) %>%
   unlist() %>%
   unique()
 names(groups) = groups
+
 
 pad_matrix_rows = function(mat, len_seq_chr) {
   rn = rownames(mat)
   missing = setdiff(len_seq_chr, rn)
   if (length(missing) > 0) {
     add = matrix(0, nrow = length(missing), ncol = ncol(mat),
-                 dimnames = list(missing, colnames(mat)))
+                  dimnames = list(missing, colnames(mat)))
     mat = rbind(mat, add)
   }
   mat[len_seq_chr, , drop = FALSE]
@@ -44,17 +46,17 @@ pad_matrix_rows = function(mat, len_seq_chr) {
 
 pick_x_breaks = function(len_seq_num) {
   if (length(len_seq_num) == 0) return(NULL)
-  by_val = if ((max(len_seq_num) - min(len_seq_num)) <= 20) 1 else if ((max(len_seq_num) - min(len_seq_num)) <= 40) 2 else 3
+  by_val = if ((max(len_seq_num) - min(len_seq_num)) <= 20) 1 else 2
   seq(min(len_seq_num), max(len_seq_num), by = by_val)
 }
 
 calc_font = function(n_panels) {
-  base = if (n_panels <= 4) 14 else if (n_panels <= 9) 12 else if (n_panels <= 14) 10 else 8
+  base = if (n_panels <= 4) 16 else if (n_panels <= 9) 14 else if (n_panels <= 16) 12 else 10
   list(
     axis_title   = base,
-    axis_text    = max(6, base - 2),
+    axis_text    = max(8, base - 2),
     strip        = base,
-    legend_text  = max(6, base - 2),
+    legend_text  = max(8, base - 2),
     legend_title = base
   )
 }
@@ -63,15 +65,11 @@ get_legend_grob = function(p) {
   ggpubr::get_legend(p + theme(legend.position = "bottom"))
 }
 
-choose_ncol = function(n) {
-  if (n <= 1) 1
-  else if (n <= 4) 2
-  else if (n <= 9) 3
-  else 4
-}
-
 n_panels = length(groups)
 fs = calc_font(n_panels)
+
+final_ncol = if (n_panels <= 2) 1 else if (n_panels <= 6) 2 else 3
+
 
 prop_l_cpm      = list()
 mean_l_cpm      = list()
@@ -84,6 +82,8 @@ prop_pl = list()
 
 legend_nt  = NULL
 legend_cls = NULL
+
+
 
 for (i in names(groups)) {
   message(i)
@@ -98,38 +98,15 @@ for (i in names(groups)) {
     tmp.mlt = melt(tmp.lib)
     rownames(tmp.mlt) = paste0(tmp.mlt$variable, "_", tmp.mlt$len)
     
-    tmp.mlt = select(tmp.mlt, value)
+    tmp.mlt = dplyr::select(tmp.mlt, value)
     colnames(tmp.mlt) = fn_lib
     
     counts_lts[[fn_lib]] = tmp.mlt
   }
   
-  all_ids = Reduce(union, lapply(counts_lts, rownames))
-  all_ids = sort(all_ids)
-  
-  counts_lts = lapply(counts_lts, function(df) {
-    miss = setdiff(all_ids, rownames(df))
-    if (length(miss) > 0) {
-      add = data.frame(
-        value = rep(0, length(miss)),
-        row.names = miss
-      )
-      colnames(add) = colnames(df)   # keep the library name as the column name
-      df = rbind(df, add)
-    }
-    df[all_ids, , drop = FALSE]
-  })
-  
-  
   tmp.counts = do.call(cbind, counts_lts)
-  tmp.counts[is.na(tmp.counts)] <- 0
-  tmp.counts = as.matrix(tmp.counts)
-  storage.mode(tmp.counts) = "numeric"
-  
+  tmp.counts[is.na(tmp.counts)] = 0
   mtx_cpm = edgeR::cpm(tmp.counts)
-  
-  
- 
   
   libs_nt = list()
   for (exp in colnames(mtx_cpm)) {
@@ -137,10 +114,10 @@ for (i in names(groups)) {
     
     cpm_mtx = as.data.frame(x) %>%
       tibble::rownames_to_column(var = "rownames") %>%
-      mutate(first_char = substr(rownames, 1, 1)) %>%
-      group_split(first_char) %>%
+      dplyr::mutate(first_char = substr(rownames, 1, 1)) %>%
+      dplyr::group_split(first_char) %>%
       setNames(c("df_A", "df_C", "df_G", "df_T")) %>%
-      lapply(function(z) select(z, c(1,2))) %>%
+      lapply(function(z) dplyr::select(z, c(1,2))) %>%
       do.call(cbind, .)
     
     rownames(cpm_mtx) = sub(".*_", "", cpm_mtx$df_A.rownames)
@@ -189,7 +166,7 @@ for (i in names(groups)) {
   
   mean_p = ggplot(mean_fn_long, aes(x = Length, y = Reads, fill = First_nt)) +
     geom_col() +
-    scale_fill_manual(values = colors_nt, name = "5' nt") +
+    scale_fill_manual(values = colors_nt, name = "5' nt") +  # keep legend definition
     scale_x_continuous(breaks = x_breaks) +
     scale_y_continuous(labels = scales::label_scientific(digits = 2)) +
     ylab("CPM") +
@@ -207,14 +184,14 @@ for (i in names(groups)) {
   
   prop_p = ggplot(prop_fn_long, aes(x = Length, y = Reads, fill = First_nt)) +
     geom_col() +
-    scale_fill_manual(values = colors_nt, name = "5' nt") +
+    scale_fill_manual(values = colors_nt, name = "5' nt") +  # keep legend definition
     scale_x_continuous(breaks = x_breaks) +
     ylab("% of CPM") +
     xlab("Length distribution (nt)") +
     theme_test() +
     theme(
       axis.title.x = element_text(size = fs$axis_title),
-      axis.text.x  = element_text(size = fs$axis_text, angle = 45, hjust = 1),
+      axis.text.x  = element_text(size = fs$axis_text),
       axis.title.y = element_text(size = fs$axis_title),
       axis.text.y  = element_text(size = fs$axis_text, angle = 90, hjust = 0.5),
       legend.position = "none"
@@ -248,48 +225,16 @@ for (i in names(groups)) {
 }
 
 for (i in names(groups)) {
-    
+  message(i)
+  
   libs = cls[grepl(groups[[i]], names(cls))]
-  all_rows = Reduce(union, lapply(libs, rownames))
-  all_rows = sort(as.numeric(all_rows))
-  all_rows_chr = as.character(all_rows)
-  
-  all_cols = Reduce(union, lapply(libs, colnames))
-  all_cols = sort(all_cols)
-  
-  libs = lapply(libs, function(df) {
-    df = as.data.frame(df)
-    
-    # add missing columns
-    miss_c = setdiff(all_cols, colnames(df))
-    if (length(miss_c) > 0) {
-      for (cc in miss_c) df[[cc]] <- 0
-    }
-    df = df[, all_cols, drop = FALSE]
-    
-    # add missing rows
-    miss_r = setdiff(all_rows_chr, rownames(df))
-    if (length(miss_r) > 0) {
-      add = matrix(0, nrow = length(miss_r), ncol = ncol(df),
-                    dimnames = list(miss_r, colnames(df)))
-      df = rbind(df, add)
-    }
-    
-    df[all_rows_chr, , drop = FALSE]
-  })
-  
   
   mean_fn = Reduce("+", libs) / length(libs)
   mean_fn = as.data.frame(mean_fn)
   
-  colnames(mean_fn) = sub("^gene", "Protein-coding", colnames(mean_fn))
-  colnames(mean_fn) = sub("DNA|RC", "Transposon", colnames(mean_fn))
-  colnames(mean_fn) = sub("LTR|LINE|PLE|Ple|Retro", "Retrotransposon", colnames(mean_fn))
-  
-  if (any(duplicated(colnames(mean_fn)))) {
-    mean_fn = as.data.frame(mean_fn)
-    mean_fn = t(rowsum(t(mean_fn), group = colnames(mean_fn))) %>%  as.data.frame()
-  }
+  colnames(mean_fn) = sub("gene", "Protein-coding", colnames(mean_fn))
+  colnames(mean_fn) = sub("DNA", "Transposon", colnames(mean_fn))
+  colnames(mean_fn) = sub("LTR|LINE", "Retrotransposon", colnames(mean_fn))
   
   len_cls = sort(as.numeric(rownames(mean_fn)))
   len_seq = seq(min(len_cls), max(len_cls), by = 1)
@@ -333,22 +278,6 @@ for (i in names(groups)) {
   mean_fn_long$exp = exp
   prop_fn_long$exp = exp
   
-  qc_sum100 = prop_fn_long %>%
-    group_by(exp, Length) %>%
-    summarise(sum_pct = sum(Reads), .groups = "drop") %>%
-    mutate(diff = sum_pct - 100)
-  
-  print(summary(qc_sum100$sum_pct))
-  
-  bad = qc_sum100 %>% filter(abs(diff) > 1e-6)
-  if (nrow(bad) > 0) {
-    message("WARNING: some Length bins do not sum to 100%")
-    print(head(bad, 20))
-  } else {
-    message("OK: all Length bins sum to 100%")
-  }
-  
-  
   mean_p = ggplot(mean_fn_long, aes(x = Length, y = Reads, fill = Class)) +
     geom_col() +
     scale_fill_manual(values = colors_cls, guide = guide_legend(reverse = TRUE), name = "Class") +
@@ -382,6 +311,7 @@ for (i in names(groups)) {
       legend.key.size = unit(.9, "cm")
     )
   
+ 
   if (is.null(legend_cls)) {
     legend_cls = get_legend_grob(
       ggplot(prop_fn_long, aes(x = Length, y = Reads, fill = Class)) +
@@ -399,13 +329,23 @@ for (i in names(groups)) {
   prop_pl[[exp]] = prop_p
 }
 
+
+
+choose_ncol = function(n) {
+  if (n <= 1) 1
+  else if (n <= 4) 2
+  else if (n <= 9) 3
+  else 4
+}
 mixed_lst = list()
+
 for (i in names(groups)) {
   g = groups[[i]]
+  
   mixed_lst[[g]] = ggarrange(
-    mean_l_cpm[[g]],
-    ggplot() + theme_void(),
-    prop_pl[[g]],
+    mean_l_cpm[[g]],             
+    ggplot() + theme_void(),      
+    prop_pl[[g]],                 
     ncol = 1, nrow = 3,
     heights = c(1.2, 0.08, .7),
     align = "v"
@@ -425,37 +365,10 @@ final_plot = ggarrange(
   main_grid,
   legend_cls,
   ncol = 1,
-  heights = c(0.10, 1, 0.18),
+  heights = c(0.10, 1, 0.18),  
   align = "v"
 )
 
-n_panels = n_groups
-ncol_facets = mixed_ncol
-nrow_facets = ceiling(n_panels / ncol_facets)
 
-all_lens = unlist(lapply(mean_fn_cpm_lis, function(m) suppressWarnings(as.numeric(rownames(m)))))
-all_lens = all_lens[is.finite(all_lens)]
-len_min = min(all_lens)
-len_max = max(all_lens)
-len_span = max(1, len_max - len_min)
 
-tick_step = if (len_span <= 20) 1 else if (len_span <= 40) 2 else 3
-n_ticks = length(seq(len_min, len_max, by = tick_step))
-
-panel_width  = 2.6 + n_ticks * 0.12
-panel_height = 4.0
-
-plot_width  = panel_width  * ncol_facets
-plot_height = panel_height * nrow_facets + 1.6
-
-ggsave(
-  "fn_cls_cpm.png",
-  device = "png",
-  path = "./",
-  plot = final_plot,
-  width = plot_width,
-  height = plot_height,
-  dpi = 300,
-  bg = "white"
-)
-
+ggsave("fn_cls_cpm.png")

@@ -20,6 +20,7 @@ log.info("\n${CYAN}${BANNER}${RESET}")
 
 // NEW params for annotations chkp
 params.cfeat	=	params.cfeat	?:	"rRNA,tRNA,gene,DNA,LINE,LTR"
+params.skip_validation = (params.skip_validation != null ? params.skip_validation.toString().toLowerCase() in ['true','1','yes','y']: false)
 params.mfeat	=	params.mfeat	?:	1
 params.reads       = params.reads       ?: "${launchDir}/test/*.fastq.gz"
 params.threads     = params.threads     ?: 2
@@ -1038,8 +1039,12 @@ process edgeR_dea {
 
 workflow {
   
+  if( !params.skip_validation ) {
   validate_annotation(ann_chkp_ch, annotation_ch)
-   
+  } else {
+  log.warn "Skipping annotation validation (--skip_validation=true)."
+  }
+ 
   def map_inputs_ch
   def rc_map_ch
   if ( params.preproc == 'fastp' ) {

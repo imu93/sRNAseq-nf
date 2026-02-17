@@ -2,9 +2,26 @@ pacman::p_load(
   ggplot2, ggpubr, pals, reshape2, scales, dplyr, purrr, edgeR, tibble, stringr, grid
 )
 
+args = commandArgs(trailingOnly = T)
+c_file = args[1]
+
 
 fn_files  = list.files(pattern = ".expanded.firstnt.tsv")
 cls_files = list.files(pattern = ".cls_mtx.tsv")
+constrast = read.delim(c_file, sep = "\t", header = T)
+
+
+constrast = read.delim(c_file, sep="\t", header=TRUE, stringsAsFactors=FALSE)
+
+required = c("c_name","group")
+if (!all(required %in% colnames(constrast))) {
+  stop(
+    "Contrast file missing required columns: ",
+    paste(setdiff(required, colnames(constrast)), collapse=", "),
+    "\nColumns found: ", paste(colnames(constrast), collapse=", "),
+    "\nFile used as contrast: ", c_file
+  )
+}
 
 fn = lapply(fn_files, function(x){
   tmp.x = read.table(x, header = TRUE)
@@ -25,11 +42,15 @@ cls = lapply(cls_files, function(x){
 names(fn)  = sub("\\..*", "", fn_files)
 names(cls) = sub("\\..*", "", cls_files)
 
-groups = names(fn) %>%
-  strsplit("_") %>%
-  map(function(x) paste(x[c(1,2,3)], collapse = "_")) %>%
-  unlist() %>%
-  unique()
+#groups = names(fn) %>%
+#  strsplit("_") %>%
+#  map(function(x) paste(x[c(1,2,3)], collapse = "_")) %>%
+#  unlist() %>%
+#  unique()
+
+constrast$c_name = trimws(constrast$c_name)
+constrast$group  = trimws(constrast$group)
+groups = unique(constrast$group)
 names(groups) = groups
 
 
@@ -44,26 +65,44 @@ pad_matrix_rows = function(mat, len_seq_chr) {
   mat[len_seq_chr, , drop = FALSE]
 }
 
-pick_x_breaks = function(len_seq_num) {
+pick_x_breaks = function(len_seq_num, max_labels = 8, prefer_even = TRUE) {
+  len_seq_num = sort(unique(as.numeric(len_seq_num)))
   if (length(len_seq_num) == 0) return(NULL)
-  by_val = if ((max(len_seq_num) - min(len_seq_num)) <= 20) 1 else 2
-  seq(min(len_seq_num), max(len_seq_num), by = by_val)
+  
+  # if few values, show all
+  if (length(len_seq_num) <= max_labels) return(len_seq_num)
+  
+  rng  = range(len_seq_num)
+  span = diff(rng)
+  
+  raw_step   = ceiling(span / (max_labels - 1))
+  nice_steps = c(1, 2, 3, 4, 5, 6, 8, 10)
+  step       = nice_steps[which.min(abs(nice_steps - raw_step))]
+  
+  start = rng[1]
+  if (prefer_even && step %% 2 == 0) start = ceiling(start / 2) * 2
+  
+  brks = seq(start, rng[2], by = step)
+  if (tail(brks, 1) != rng[2]) brks = c(brks, rng[2])
+  brks
 }
 
+
 calc_font = function(n_panels) {
-  base = if (n_panels <= 4) 16 else if (n_panels <= 9) 14 else if (n_panels <= 16) 12 else 10
+  base = if (n_panels <= 4) 16 else if (n_panels <= 9) 10 else if (n_panels <= 16) 7 else 16
   list(
     axis_title   = base,
-    axis_text    = max(8, base - 2),
+    axis_text    = max(10, base - 2),
     strip        = base,
-    legend_text  = max(8, base - 2),
+    legend_text  = max(10, base - 2),
     legend_title = base
   )
 }
 
 get_legend_grob = function(p) {
-  ggpubr::get_legend(p + theme(legend.position = "bottom"))
+  get_legend(p + theme(legend.position = "bottom"))
 }
+
 
 n_panels = length(groups)
 fs = calc_font(n_panels)
@@ -88,7 +127,13 @@ legend_cls = NULL
 for (i in names(groups)) {
   message(i)
   
-  libs = fn[grepl(groups[[i]], names(fn))]
+  sample_names = constrast$c_name[constrast$group == i]
+  libs = fn[sample_names]
+  
+  if (length(libs) == 0) {
+    warning("No fn tables found for group: ", i)
+    next
+  }
   
   counts_lts = list()
   for (fn_lib in names(libs)) {
@@ -98,7 +143,7 @@ for (i in names(groups)) {
     tmp.mlt = melt(tmp.lib)
     rownames(tmp.mlt) = paste0(tmp.mlt$variable, "_", tmp.mlt$len)
     
-    tmp.mlt = dplyr::select(tmp.mlt, value)
+    tmp.mlt = select(tmp.mlt, value)
     colnames(tmp.mlt) = fn_lib
     
     counts_lts[[fn_lib]] = tmp.mlt
@@ -106,18 +151,18 @@ for (i in names(groups)) {
   
   tmp.counts = do.call(cbind, counts_lts)
   tmp.counts[is.na(tmp.counts)] = 0
-  mtx_cpm = edgeR::cpm(tmp.counts)
+  mtx_cpm = cpm(tmp.counts)
   
   libs_nt = list()
   for (exp in colnames(mtx_cpm)) {
     x = mtx_cpm[, exp]
     
     cpm_mtx = as.data.frame(x) %>%
-      tibble::rownames_to_column(var = "rownames") %>%
-      dplyr::mutate(first_char = substr(rownames, 1, 1)) %>%
-      dplyr::group_split(first_char) %>%
+      rownames_to_column(var = "rownames") %>%
+      mutate(first_char = substr(rownames, 1, 1)) %>%
+      group_split(first_char) %>%
       setNames(c("df_A", "df_C", "df_G", "df_T")) %>%
-      lapply(function(z) dplyr::select(z, c(1,2))) %>%
+      lapply(function(z) select(z, c(1,2))) %>%
       do.call(cbind, .)
     
     rownames(cpm_mtx) = sub(".*_", "", cpm_mtx$df_A.rownames)
@@ -168,7 +213,7 @@ for (i in names(groups)) {
     geom_col() +
     scale_fill_manual(values = colors_nt, name = "5' nt") +  # keep legend definition
     scale_x_continuous(breaks = x_breaks) +
-    scale_y_continuous(labels = scales::label_scientific(digits = 2)) +
+    scale_y_continuous(labels = label_scientific(digits = 2)) +
     ylab("CPM") +
     facet_wrap(~IP) +
     theme_test() +
@@ -227,12 +272,18 @@ for (i in names(groups)) {
 for (i in names(groups)) {
   message(i)
   
-  libs = cls[grepl(groups[[i]], names(cls))]
+  sample_names = constrast$c_name[constrast$group == i]
+  libs = cls[sample_names]
+  
+  if (length(libs) == 0) {
+    warning("No cls tables found for group: ", i)
+    next
+  }
   
   mean_fn = Reduce("+", libs) / length(libs)
   mean_fn = as.data.frame(mean_fn)
   
-  colnames(mean_fn) = sub("gene", "Protein-coding", colnames(mean_fn))
+  colnames(mean_fn) = sub("^gene", "Protein-coding", colnames(mean_fn))
   colnames(mean_fn) = sub("DNA", "Transposon", colnames(mean_fn))
   colnames(mean_fn) = sub("LTR|LINE", "Retrotransposon", colnames(mean_fn))
   
@@ -257,7 +308,7 @@ for (i in names(groups)) {
     levels = c(
       "Unannotated","Other_repeat","Other","Other_ncRNA","snRNA","snoRNA",
       "piRNA","lincRNA","rRNA","yRNA","tRNA","miRNA","Unknown",
-      "Retrotransposon","Transposon","Protein-coding"
+      "Retrotransposon","pseudogene","Protein-coding"
     )
   )
   prop_fn_long$Class = factor(
@@ -265,12 +316,12 @@ for (i in names(groups)) {
     levels = c(
       "Unannotated","Other","Other_repeat","Other_ncRNA","snRNA","snoRNA",
       "piRNA","lincRNA","rRNA","yRNA","tRNA","miRNA","Unknown",
-      "Retrotransposon","Transposon","Protein-coding"
+      "Retrotransposon","Transposon","pseudogene","Protein-coding"
     )
   )
   
   colors_cls = rev(c(
-    "#0051FFFF","#0092EFFF","#13F240FF","#9AFF16FF","#F5E00A","#FFBA00FF","#FF7F00FF",
+    "#0051FFFF","#0092EFFF","#5FD9BB","#13F240FF","#9AFF16FF","#F5E00A","#FFBA00FF","#FF7F00FF",
     "#FF3E00","#D70B3D","#F55E87","#601573","#3D0B31","#2F2F30","#76767A","#DBDBDB"
   ))
   
@@ -347,8 +398,7 @@ for (i in names(groups)) {
     ggplot() + theme_void(),      
     prop_pl[[g]],                 
     ncol = 1, nrow = 3,
-    heights = c(1.2, 0.08, .7),
-    align = "v"
+    heights = c(1.2, 0.08, .7)
   )
 }
 
@@ -365,10 +415,7 @@ final_plot = ggarrange(
   main_grid,
   legend_cls,
   ncol = 1,
-  heights = c(0.10, 1, 0.18),  
-  align = "v"
+  heights = c(0.10, 1, 0.18)
 )
 
-
-
-ggsave("fn_cls_cpm.png")
+ggsave("fn_cls_cpm.png", width = 12)

@@ -959,6 +959,7 @@ process fn_cls{
 
   input:
     tuple val(id), path(fn_tables), path(cls_tables)
+    path contrast_file
 
   output:
     path "fn_cls_cpm.png", emit: avg_png
@@ -967,11 +968,9 @@ process fn_cls{
 
   script:
   """
-  Rscript ${params.srcDir}/03.complex_plot.R ${fn_tables.join(" ")} ${cls_tables.join(" ")}
+  Rscript ${params.srcDir}/03.complex_plot.R ${contrast_file} ${fn_tables.join(" ")} ${cls_tables.join(" ")} 
   """
 }
-
-
 
 process bam2bedgraph {
     tag "${bam_file.simpleName}"
@@ -1227,7 +1226,9 @@ workflow {
     def all_cls = cls_out.cls_tables.collect()
                   .map { files -> tuple('all', files) }
 
-    fn_cls( all_fn.join(all_cls) )
+    def contrast_val_ch = Channel.value( contrast_file )
+
+    fn_cls( all_fn.join(all_cls), contrast_val_ch )
   }
 
 

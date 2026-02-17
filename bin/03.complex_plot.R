@@ -89,7 +89,7 @@ pick_x_breaks = function(len_seq_num, max_labels = 8, prefer_even = TRUE) {
 
 
 calc_font = function(n_panels) {
-  base = if (n_panels <= 4) 16 else if (n_panels <= 9) 10 else if (n_panels <= 16) 7 else 16
+  base = if (n_panels <= 4) 12 else if (n_panels <= 9) 10 else if (n_panels <= 16) 7 else 12
   list(
     axis_title   = base,
     axis_text    = max(10, base - 2),
@@ -408,14 +408,16 @@ mixed_ncol = choose_ncol(n_groups)
 main_grid = ggarrange(
   plotlist = mixed_lst,
   ncol = mixed_ncol
-)
+) + theme(plot.margin = unit(c(0.5, 0.5, 0.5, 0.5), 
+                               "inches"))
 
 final_plot = ggarrange(
   legend_nt,
   main_grid,
   legend_cls,
   ncol = 1,
-  heights = c(0.10, 1, 0.18)
-)
+  heights = c(0.10, 2, 0.18)
+) + theme(plot.margin = unit(c(0.5, 0.5, 0.5, 0.5), 
+                             "inches"))
 
 ggsave("fn_cls_cpm.png", width = 12)

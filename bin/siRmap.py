@@ -100,6 +100,13 @@
 # some random steps, and eventhough this is not even a real cahnge. 
 # I'll still testing this new function to fully remove the old one
 
+
+# 08-05-2026
+# In the most resent version I have fixed some bugs related to the log files
+# In the raw mode I used to report N of Collapsed reads, but the raw mode is not designed to collaps
+# Also now the random mode uses streaming as in the uwm 
+# _random_assign_numba removed (no longer called after numba removal) for seed and random asignment
+
 import shutil
 import os
 import time
@@ -118,7 +125,7 @@ from collections import defaultdict, Counter
 import fnmatch
 sys.dont_write_bytecode = True
 from multiprocessing import Pool, cpu_count
-
+from urllib.parse import unquote
 
 
 # Tool verification
@@ -327,7 +334,7 @@ def run_bowtie(
     # per-thread mem for samtools sort
     
     # Compute per-thread mem using sort_threads (not total threads)
-    sort_mem_bytes = total_mem_bytes // max(1, sort_threads)
+    # sort_mem_bytes = total_mem_bytes // max(1, sort_threads)
 
     printable_cmd = " ".join(cmd)
     print("\nRunning Bowtie mapping:")
@@ -605,7 +612,7 @@ def _save_index_numpy_dir(index: dict, out_prefix: str):
     # Save each block as separate .npy files
     for (chrom, strand), block in index.items():
         # sanitize chrom to avoid path separators in filenames
-        safe_chrom = str(chrom).replace(os.sep, "_").replace(":", "_")
+        safe_chrom = str(chrom).replace("%", "%25").replace("/", "%2F").replace("\\", "%5C").replace(":", "%3A")
         keyname = f"{safe_chrom}__{strand}"
         # each block has four arrays: starts_pos, starts_pref, ends_pos, ends_pref
         np.save(os.path.join(out_dir, f"{keyname}__starts_pos.npy"),  block["starts_pos"])
@@ -1371,7 +1378,7 @@ def _load_index_numpy_dir(index_dir: str, use_mmap: bool = True):
             chrom, strand = parts
         else:
             chrom, strand = keyname, "+"
-        chrom = chrom.replace("_", "/") if "_" in chrom else chrom  # best-effort reverse of sanitize
+        chrom = unquote(chrom)
         index[(chrom, strand)] = {
             "starts_pos":  starts_pos,
             "starts_pref": starts_pref,
@@ -1567,7 +1574,7 @@ def resolve_multimappers_uwm(
                 # choose the primary if present, else first
                 primaries = [a for a in reads if not a.is_secondary]
                 chosen = primaries[0] if primaries else reads[0]
-                rc_from_any = _get_rc_safe(chosen)
+                rc_from_any = 1 if uncollapsed else _get_rc_safe(chosen)
                 # mark as unique (keep my ZT style)
                 _expand_write(chosen, out_bam, rc_from_any, zt_value="unique:1", keep_qname_if_rc1=uncollapsed,)
 
@@ -1604,7 +1611,7 @@ def resolve_multimappers_uwm(
 
             # Let's assign the read
             multimapper_instances += 1
-            rc_from_any = _get_rc_safe(reads[0])
+            rc_from_any = 1 if uncollapsed else _get_rc_safe(reads[0])
             mm_reads_written += int(rc_from_any)
             total_reads_written += int(rc_from_any)
             if had_tie:
@@ -1614,7 +1621,7 @@ def resolve_multimappers_uwm(
 
             # pick the corresponding pysam alignment object
             chosen_aln = reads[best_idx]
-            rc_from_any = _get_rc_safe(chosen_aln)
+            rc_from_any = 1 if uncollapsed else _get_rc_safe(chosen_aln)
 
             # ZT tag for multimappers (uwm vs random)
             zt = f"{'random' if had_tie else 'uwm'}:{prob:.6f}"
@@ -1641,7 +1648,8 @@ def resolve_multimappers_uwm(
 
     # Console summary (keep my style)
     print("\nSummary (UWM):")
-    print(f" Collapsed instances analyzed: {total_instances:,}")
+    _inst_label = "Read instances" if uncollapsed else "Collapsed instances"
+    print(f" {_inst_label} analyzed: {total_instances:,}")
     print(f" Unique instances kept:        {unique_instances:,} ({pct_uni:.1f}%)")
     print(f" Multimappers resolved:        {multimapper_instances:,} ({pct_mm:.1f}%)")
     print(f" Ties broken:                  {tie_breaks:,}")
@@ -1650,7 +1658,8 @@ def resolve_multimappers_uwm(
     print(f" Window={window_size}, Strand-aware={consider_strand}, Seed={seed}")
     print(f" Suppressed by mmap_max:       {suppressed_mmap_max:,}")
     print(f" Suppressed equal-prob:        {suppressed_equal_prob:,}")
-    print(f" Reads written (expanded):      {total_reads_written:,}")
+    _written_label = "Reads written" if uncollapsed else "Reads written (expanded)"
+    print(f" {_written_label}:      {total_reads_written:,}")
     print(f"   from uniques:              {unique_reads_written:,}")
     print(f"   from multimappers:         {mm_reads_written:,}")
     print(f"Done in {run_time:.2f} s.\n")
@@ -1665,7 +1674,8 @@ def resolve_multimappers_uwm(
             sf.write(f"Window: {window_size}\n")
             sf.write(f"Strand-aware: {consider_strand}\n")
             sf.write(f"Seed: {seed}\n")
-            sf.write(f"Collapsed instances analyzed: {total_instances}\n")
+            _inst_label_log = "Read instances analyzed" if uncollapsed else "Collapsed instances analyzed"
+            sf.write(f"{_inst_label_log}: {total_instances}\n")
             sf.write(f"Unique instances kept: {unique_instances} ({pct_uni:.1f}%)\n")
             sf.write(f"Multimappers resolved: {multimapper_instances} ({pct_mm:.1f}%)\n")
             sf.write(f"Ties broken: {tie_breaks}\n")
@@ -1674,19 +1684,14 @@ def resolve_multimappers_uwm(
             sf.write(f"Suppressed equal-prob: {suppressed_equal_prob}\n")
             sf.write(f"Output BAM: {output_bam_path}\n")
             sf.write(f"Run time: {run_time:.2f} s\n")
-            sf.write(f"Reads written (expanded): {total_reads_written:,}\n")
-            sf.write(f"Expanded unique: {unique_reads_written:,}\n")
-            sf.write(f"Expanded multimappers: {mm_reads_written:,}\n\n")
+            _wlabel = "Reads written" if uncollapsed else "Reads written (expanded)"
+            sf.write(f"{_wlabel}: {total_reads_written:,}\n")
+            sf.write(f"Unique: {unique_reads_written:,}\n")
+            sf.write(f"Multimappers: {mm_reads_written:,}\n\n")
 
     return output_bam_path
 
 
-
-# Support function for numpy/numba random assignment
-@njit(cache=False, fastmath=True)
-def _random_assign_numba(n_aligns):
-    """Fast random pick using numba"""
-    return np.random.randint(0, n_aligns)
 
 
 # Radom placement of multimappers
@@ -1707,11 +1712,15 @@ def assign_multimappers_randomly(
     using numpy and numba instead of pure python
     """
     start_time = time.time()
-    np.random.seed(seed)
+    random.seed(seed)
     print("\nassigning multimappers randomly")
 
-    groups, header = _group_alignments_by_qname(bam_file)
-
+    if uncollapsed:
+        header, group_iter = _iter_groups_streaming(bam_file)
+        iterator = tqdm(group_iter, desc="Randomly resolve multimappers")
+    else:
+        groups, header = _group_alignments_by_qname(bam_file)
+        iterator = tqdm(groups.items(), desc="Randomly resolve multimappers")
     total_instances = 0
     unique_instances = 0
     multimapper_instances = 0
@@ -1719,25 +1728,25 @@ def assign_multimappers_randomly(
     unique_reads_expanded = 0          
     multimapper_reads_expanded = 0 
     
-
+    
     with pysam.AlignmentFile(output_bam, "wb", header=header) as out_bam:
-        for rid, alns in tqdm(groups.items(), desc="Randomly resolve multimappers"):
+        for rid, alns in iterator:
             total_instances += 1
 
             if len(alns) == 1:
                 chosen = alns[0]
                 unique_instances += 1
-                rc = _get_rc_safe(chosen)
+                rc = 1 if uncollapsed else _get_rc_safe(chosen)
                 unique_reads_expanded += int(rc)
             else:
                 # FIX: numba helper takes one arg
-                chosen_idx = _random_assign_numba(len(alns))
+                chosen_idx = random.randrange(len(alns))
                 chosen = alns[chosen_idx]
                 multimapper_instances += 1
-                rc = _get_rc_safe(chosen)
+                rc = 1 if uncollapsed else _get_rc_safe(chosen)
                 multimapper_reads_expanded += int(rc)
 
-            rc = _get_rc_safe(chosen)
+            rc = 1 if uncollapsed else _get_rc_safe(chosen)
             # Sanitize + expand like UWM, with ZT tag
             _expand_write(chosen, out_bam, rc, zt_value="random:1", keep_qname_if_rc1=uncollapsed,)
             total_reads_written += int(rc)
@@ -1749,23 +1758,26 @@ def assign_multimappers_randomly(
 
     run_time = time.time() - start_time
     print("\nSummary:")
-    print(f"- Collapsed instances analyzed: {total_instances}")
+    _inst_label = "Read instances" if uncollapsed else "Collapsed instances"
+    print(f"- {_inst_label} analyzed: {total_instances}")
     print(f"- Unique instances kept:         {unique_instances}")
     print(f"- Multimappers assigned:         {multimapper_instances}")
-    print(f"- Reads written (expanded):      {total_reads_written}")
-    print(f"Extended BAM: {output_bam}")
+    print(f"- Reads written:                  {total_reads_written}")
+    print(f"BAM: {output_bam}")
     print(f"Done in {run_time:.2f} s.\n")
 
     if summary_log_file:
         os.makedirs(os.path.dirname(os.path.abspath(summary_log_file)) or ".", exist_ok=True)
         with open(summary_log_file, "a") as sf:
-            sf.write(f"Collapsed instances analyzed: {total_instances}\n")
+            _inst_label_log = "Read instances analyzed" if uncollapsed else "Collapsed instances analyzed"
+            sf.write(f"{_inst_label_log}: {total_instances}\n")
             sf.write(f"Unique instances kept: {unique_instances}\n")
             sf.write(f"Multimappers assigned: {multimapper_instances}\n")
-            sf.write(f"Reads written (expanded): {total_reads_written}\n")
-            sf.write(f"Unique reads (expanded): {unique_reads_expanded}\n")
-            sf.write(f"Multimapper reads (expanded): {multimapper_reads_expanded}\n")
-            sf.write(f"Extended BAM: {output_bam}\n")
+            _wlabel = "Reads written" if uncollapsed else "Reads written (expanded)"
+            sf.write(f"{_wlabel}: {total_reads_written}\n")
+            sf.write(f"Unique reads: {unique_reads_expanded}\n")
+            sf.write(f"Multimapper reads: {multimapper_reads_expanded}\n")
+            sf.write(f"BAM: {output_bam}\n")
             sf.write(f"Random seed: {seed}\n")
             sf.write(f"Run time: {run_time:.2f}\n")
             

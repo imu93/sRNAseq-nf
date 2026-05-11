@@ -30,7 +30,7 @@ params.fastp_use_adapter = (params.fastp_use_adapter != null ? params.fastp_use_
 params.disable_length_filter = (params.disable_length_filter != null   ? params.disable_length_filter.toString().toLowerCase() in ['true','1','yes','y'] : false)
 params.minlen      = params.minlen      ?: 18
 params.maxlen      = params.maxlen      ?: 27
-params.map_gate    = params.map_gate    ?: 'none' // 'trure' to save resources, none to skip the gate and increse speed and resorce usge
+params.map_gate    = params.map_gate    ?: 'none' // 'true' to save resources, none to skip the gate and increse speed and resorce usge
 params.genome      = params.genome      ?: "${launchDir}/genome/caenorhabditis_elegans.PRJNA13758.WBPS19.genomic.fa"
 params.annotation  = params.annotation  ?: "${launchDir}/annotation/caenorhabditis_elegans.PRJNA13758.WBP19.overlapping_annotation.gff3"
 
@@ -628,9 +628,8 @@ process resolve_random {
     --in-bam ${bam} \
     --out-bam "\${SAMPLE}.expanded.bam" \
     --seed 123 \
-    --threads ${params.threads} \
+    --threads ${params.thr_sm} \
     --sort-mem ${params.smem_sm} \
-    --do-sort true \
     ${ params.raw_mode ? '--raw' : '' }
   """
 }
@@ -1109,7 +1108,7 @@ workflow {
 
   
   def fastq_map_for_map
-  if( params.map_gate == 'all' ) {
+  if( params.map_gate == 'true' ) {
     def all_done = map_inputs_ch.collect().map { true }
     fastq_map_for_map = map_inputs_ch
                       .combine(all_done)

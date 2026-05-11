@@ -1,6 +1,5 @@
-pacman::p_load(
-  ggplot2, ggpubr, pals, reshape2, scales, dplyr, purrr, edgeR, tibble, stringr, grid
-)
+pacman::p_load(ggplot2, ggpubr, pals, reshape2, scales, dplyr,
+               purrr, edgeR, tibble, stringr, grid)
 
 args = commandArgs(trailingOnly = T)
 c_file = args[1]
@@ -9,7 +8,6 @@ c_file = args[1]
 fn_files  = list.files(pattern = ".expanded.firstnt.tsv")
 cls_files = list.files(pattern = ".cls_mtx.tsv")
 constrast = read.delim(c_file, sep = "\t", header = T)
-
 
 constrast = read.delim(c_file, sep="\t", header=TRUE, stringsAsFactors=FALSE)
 
@@ -49,7 +47,7 @@ names(cls) = sub("\\..*", "", cls_files)
 #  unique()
 
 constrast$c_name = trimws(constrast$c_name)
-constrast$group  = trimws(constrast$group)
+constrast$group  = sub("_[^_]+$", "", constrast$c_name)
 groups = unique(constrast$group)
 names(groups) = groups
 

@@ -452,5 +452,5 @@ final_plot = ggarrange(
 final_plot = annotate_figure( final_plot, top = NULL,
   bottom = NULL, left = NULL, right = NULL)
 
-ggsave("final_mixed_grid.pdf",  final_plot, width = 5.5 * mixed_ncol,
+ggsave("fn_cls_cpm.png",  final_plot, width = 5.5 * mixed_ncol,
        height = 4.2 * mixed_nrow + 1.2, limitsize = FALSE)

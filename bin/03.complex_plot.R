@@ -1,9 +1,9 @@
 pacman::p_load(ggplot2, ggpubr, pals, reshape2, scales, dplyr,
                purrr, edgeR, tibble, stringr, grid)
 
-args = commandArgs(trailingOnly = T)
-c_file = args[1]
-
+#args = commandArgs(trailingOnly = T)
+#c_file = args[1]
+c_file = "contrast.tsv"
 
 fn_files  = list.files(pattern = ".expanded.firstnt.tsv")
 cls_files = list.files(pattern = ".cls_mtx.tsv")
@@ -57,7 +57,7 @@ pad_matrix_rows = function(mat, len_seq_chr) {
   missing = setdiff(len_seq_chr, rn)
   if (length(missing) > 0) {
     add = matrix(0, nrow = length(missing), ncol = ncol(mat),
-                  dimnames = list(missing, colnames(mat)))
+                 dimnames = list(missing, colnames(mat)))
     mat = rbind(mat, add)
   }
   mat[len_seq_chr, , drop = FALSE]
@@ -124,7 +124,6 @@ legend_cls = NULL
 
 for (i in names(groups)) {
   message(i)
-  
   sample_names = constrast$c_name[constrast$group == i]
   libs = fn[sample_names]
   
@@ -204,13 +203,15 @@ for (i in names(groups)) {
   prop_fn_long$IP = groups[[i]]
   
   x_breaks = pick_x_breaks(len_seq)
+  x_breaks_cpm = pick_x_breaks(len_seq, max_labels = 3)
+  x_breaks_prop = pick_x_breaks(len_seq)
   
   colors_nt = rev(c("#00008AFF", "#09891A", "#E6110E", "#FFE400"))
   
   mean_p = ggplot(mean_fn_long, aes(x = Length, y = Reads, fill = First_nt)) +
     geom_col() +
     scale_fill_manual(values = colors_nt, name = "5' nt") +  # keep legend definition
-    scale_x_continuous(breaks = x_breaks) +
+    scale_x_continuous(breaks = x_breaks_cpm) +
     scale_y_continuous(labels = label_scientific(digits = 2)) +
     ylab("CPM") +
     facet_wrap(~IP) +
@@ -269,7 +270,7 @@ for (i in names(groups)) {
 
 for (i in names(groups)) {
   message(i)
-  
+  i
   sample_names = constrast$c_name[constrast$group == i]
   libs = cls[sample_names]
   
@@ -360,7 +361,7 @@ for (i in names(groups)) {
       legend.key.size = unit(.9, "cm")
     )
   
- 
+  
   if (is.null(legend_cls)) {
     legend_cls = get_legend_grob(
       ggplot(prop_fn_long, aes(x = Length, y = Reads, fill = Class)) +
@@ -400,22 +401,56 @@ for (i in names(groups)) {
   )
 }
 
-n_groups = length(groups)
+choose_ncol = function(n) {
+  if (n <= 1) 1
+  else if (n <= 4) 2
+  else if (n <= 9) 3
+  else 4
+}
+
+mixed_lst = list()
+
+for (i in names(groups)) {
+  g = groups[[i]]
+  
+  if (is.null(mean_l_cpm[[g]]) || is.null(prop_pl[[g]])) {
+    warning("Skipping group with missing plot: ", g)
+    next
+  }
+  
+  mixed_lst[[g]] = ggarrange(
+    mean_l_cpm[[g]],
+    ggplot() + theme_void(),
+    prop_pl[[g]],
+    ncol = 1,
+    nrow = 3,
+    heights = c(1.2, 0.08, 0.7),
+    align = "v"
+  )
+}
+
+n_groups   = length(mixed_lst)
 mixed_ncol = choose_ncol(n_groups)
+mixed_nrow = ceiling(n_groups / mixed_ncol)
 
 main_grid = ggarrange(
-  plotlist = mixed_lst,
-  ncol = mixed_ncol
-) + theme(plot.margin = unit(c(0.5, 0.5, 0.5, 0.5), 
-                               "inches"))
+  plotlist = unname(mixed_lst),
+  ncol = mixed_ncol,
+  nrow = mixed_nrow,
+  align = "hv"
+)
 
 final_plot = ggarrange(
   legend_nt,
   main_grid,
   legend_cls,
   ncol = 1,
+  nrow = 3,
   heights = c(0.10, 2, 0.18)
-) + theme(plot.margin = unit(c(0.5, 0.5, 0.5, 0.5), 
-                             "inches"))
+)
 
-ggsave("fn_cls_cpm.png", width = 12)
+final_plot = annotate_figure( final_plot, top = NULL,
+  bottom = NULL, left = NULL, right = NULL)
+
+ggsave("final_mixed_grid.pdf",  final_plot, width = 5.5 * mixed_ncol,
+       height = 4.2 * mixed_nrow + 1.2, limitsize = FALSE)

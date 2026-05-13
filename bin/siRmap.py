@@ -4,7 +4,7 @@
 # Aim:
 # siRmap for sRNA alignment and multimapping placement
 # Last update: 11-12-2025
-# This is the siRmap v2.1.0.0 module for mapping small RNA seq data
+# This is the siRmap v3.0.0 module for mapping small RNA seq data
 # The biigest changes are the use of numba to speed up the UWM assignment
 
 
@@ -116,13 +116,13 @@ import gzip
 import argparse
 import pysam
 import pickle
+import threading
 import numpy as np
 from numba import njit, prange
 import sys
 from tqdm import tqdm
 import subprocess
 from collections import defaultdict, Counter
-import fnmatch
 sys.dont_write_bytecode = True
 from multiprocessing import Pool, cpu_count
 from urllib.parse import unquote
@@ -245,11 +245,82 @@ def build_bowtie_index(
     if process.returncode != 0:
         raise subprocess.CalledProcessError(process.returncode, cmd)
     print(f"Index built successfully: {index_base}.*.ebwt\n")
-    
-    
+
+
+# Save subprocess logs in parallel to avoid blocking    
+def _drain_stream_to_log(stream, log_handle):
+    for line in iter(stream.readline, b""):
+        log_handle.write(line.decode(errors="replace"))
+    stream.close()
+
+
+# I need this function to manage the logs from bowtie and samtools
+# This will be used in the two modes
+def _finalize_qname_count(n_alignments, stats):
+    if n_alignments <= 0:
+        return
+
+    stats["aligned_read_ids"] += 1
+
+    if n_alignments == 1:
+        stats["unique_read_ids"] += 1
+    else:
+        stats["multimapper_read_ids"] += 1
+
+# In previous versions, the run_bowtie function uses two bam pasess with pysam
+# This make the process slower, so the idea here is convert the sam into bam directly
+# and also build my summary 
+def _stream_sam_to_bam_and_summarize(
+    bowtie_stdout,
+    samtools_stdin,
+):
+    # Summary dic 
+    stats = {
+        "aligned_read_ids": 0,
+        "unique_read_ids": 0,
+        "multimapper_read_ids": 0,
+        "sam_records": 0,
+    }
+
+    current_qname = None
+    current_qname_alns = 0
+
+    for raw_line in iter(bowtie_stdout.readline, b""):
+        samtools_stdin.write(raw_line)
+
+        if raw_line.startswith(b"@"):
+            continue
+
+        stats["sam_records"] += 1
+
+        try:
+            qname = raw_line.split(b"\t", 1)[0]
+        except Exception:
+            continue
+        # Count QNAME groups to build the summary
+        if current_qname is None:
+            current_qname = qname
+            current_qname_alns = 1
+        elif qname == current_qname:
+            current_qname_alns += 1
+        else:
+            _finalize_qname_count(current_qname_alns, stats)
+            current_qname = qname
+            current_qname_alns = 1
+    _finalize_qname_count(current_qname_alns, stats)
+
+    bowtie_stdout.close()
+    samtools_stdin.close()
+    return stats
+
 # Alignment
 # I have modified this function to allow capping the number of multimappers reported per read
 # And also to remove the sorting step from the bowtie pipeline, this will be done later if needed in the asignment step
+# UPDATE 12-05-2026 
+# De aqui en adelante voy a tener dos branches para run_bowtie
+# Para el collapsed mode run_bowtie va a ser mi opcion pricipal, 
+# por ahora esta funcion permite maneja el RC para colapsados de forma
+# correcta como lo diseñe en primer lugar
 def run_bowtie(
     fastq_file,
     index_base,
@@ -259,7 +330,7 @@ def run_bowtie(
     non_mappers_file=None,
     threads=4,
     sort_mem="2G",
-    index_output_bam=True,
+    index_output_bam=False,
     summary_log_file=None,
     max_multimaps=None,
 ):
@@ -289,16 +360,16 @@ def run_bowtie(
 
     # Split threads across stages to avoid issues with local nextflow
     T = max(1, int(threads))
-    view_threads  = 1
-    sort_threads  = max(1, T // 3)
-    bt_threads    = max(1, T - view_threads - sort_threads)
+    view_threads = 1
+    bt_threads   = T
+
 
     # Build Bowtie command (keep your original -v mismatches behavior)
     cmd = ["bowtie", "-S", "-q", "-v", str(mismatches)]
 
     # Reporting mode: all vs capped
     if max_multimaps is None:
-        cmd += ["-a"]                       # report all alignments (existing default)
+        cmd += ["-a"]              # report all alignments (existing default)
     else:
         try:
             n = int(max_multimaps)
@@ -345,23 +416,33 @@ def run_bowtie(
         lf.write(f"Start time: {time.strftime('%c')}\n")
         lf.write("Command: " + printable_cmd + "\n")
 
-        # Change: remove sort from pipeline
-        bowtie = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        view   = subprocess.Popen(["samtools", "view", "-b", "-@", str(view_threads), "-", "-o", output_bam],
-                                stdin=bowtie.stdout)
+        bowtie = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
 
-        # Make sure pipe isn't blocking
+        view = subprocess.Popen(
+            ["samtools", "view", "-b", "-@", str(view_threads), "-", "-o", output_bam],
+            stdin=bowtie.stdout,
+        )
+
+        # Important:
+        # close bowtie.stdout in the parent so bowtie can receive SIGPIPE
+        # correctly if samtools exits early.
         bowtie.stdout.close()
 
-        # Capture bowtie stderr into the log in real time
-        for line in iter(bowtie.stderr.readline, b""):
-            s = line.decode(errors="replace")
-            lf.write(s)
-        bowtie.stderr.close()
+        # Drain Bowtie stderr in parallel so it cannot block
+        stderr_thread = threading.Thread(
+            target=_drain_stream_to_log,
+            args=(bowtie.stderr, lf),
+            daemon=True,
+        )
+        stderr_thread.start()
 
-        # Wait for the pipeline
         rc_view = view.wait()
         rc_bt   = bowtie.wait()
+        stderr_thread.join()
 
         lf.write(f"\nEnd time: {time.strftime('%c')}\n")
         lf.flush()
@@ -383,20 +464,8 @@ def run_bowtie(
         except Exception:
             pass
 
-    # Summarize alignment 
-    print("\nGenerating alignment summary")
-    bam_in = pysam.AlignmentFile(output_bam, "rb")
 
-    alignments_per_read = defaultdict(int)
-    for aln in tqdm(bam_in.fetch(until_eof=True), desc="Count alns per read ID"):
-        if not aln.is_unmapped:
-            alignments_per_read[aln.query_name] += 1
-    bam_in.close()
 
-    # Totals by read ID
-    aligned_read_ids = len(alignments_per_read)                              
-    unique_read_ids  = sum(1 for n in alignments_per_read.values() if n == 1) 
-    multimapper_read_ids = sum(1 for n in alignments_per_read.values() if n > 1)
 
     # Read Bowtie stderr summary for total processed, this will be easier
     bt_total_processed = None
@@ -430,19 +499,8 @@ def run_bowtie(
             )
 
         # Final summary
-        sf.write("BAM summary (by collapsed read ID / QNAME):\n")
-        sf.write(
-            "  Unique mappers: {0:,} / {1:,} ({2:.1f}%)\n".format(
-                unique_read_ids, aligned_read_ids,
-                (unique_read_ids / max(1, aligned_read_ids)) * 100.0
-            )
-        )
-        sf.write(
-            "  Multimappers:  {0:,} / {1:,} ({2:.1f}%)\n".format(
-                multimapper_read_ids, aligned_read_ids,
-                (multimapper_read_ids / max(1, aligned_read_ids)) * 100.0
-            )
-        )
+        sf.write("Alignment summary (by QNAME): skipped during mapping for speed.\n")
+        sf.write("  Unique/multimapper counts are reported during NH/RC tagging and resolution.\n")
 
         # If need save unmappers
         if save_non_mappers and non_mappers_file:
@@ -452,7 +510,285 @@ def run_bowtie(
         sf.write("\n")
 
     print(f"Mapping summary saved: {summary_log_file}\n")
-    
+
+
+
+
+def run_bowtie_raw_tagged(
+    fastq_file,
+    index_base,
+    output_bam=None,
+    mismatches=1,
+    save_non_mappers=False,
+    non_mappers_file=None,
+    threads=4,
+    summary_log_file=None,
+    max_multimaps=None,
+):
+
+    base = os.path.basename(fastq_file)
+
+    for ext in (".fastq.gz", ".fq.gz", ".fastq", ".fq"):
+        if base.endswith(ext):
+            base = base[: -len(ext)]
+            break
+
+    if output_bam is None:
+        output_bam = base + ".bam"
+
+    index_base = os.path.splitext(index_base)[0] if index_base.endswith((".fa", ".fasta")) else index_base
+
+    raw_log = f"{base}_raw_bowtie.log"
+
+    if summary_log_file is None:
+        summary_log_file = f"{base}_summary.log"
+
+    # In previous versions run_bowtie assigned cpus to bowtie and samtools
+    # but this was causing issues with nextflow local execution
+    # so now I assign all threads to bowtie and keep samtools view small
+    # I may improve this later but for now it avoids local nextflow problems
+    thr = max(1, int(threads))
+    view_thr = 2
+    bt_thr = thr
+
+    # Basic bowtie command
+    # -S gives SAM
+    # -q input is FASTQ
+    # -v is the number of mismatches
+    cmd = ["bowtie", "-S", "-q", "-v", str(mismatches)]
+
+    # Define how many multimappers to report
+    # if None report all with -a
+    # if n report up to n hits with -k
+    # I keep this behavior because it is useful for benchmarking
+    if max_multimaps is None:
+        cmd += ["-a"]
+    else:
+        try:
+            n = int(max_multimaps)
+
+            if n <= 0:
+                cmd += ["-a"]
+            else:
+                cmd += ["-k", str(n)]
+
+        except Exception:
+            cmd += ["-a"]
+
+    # Keep only the best stratum
+    # this keeps the same behavior as my previous bowtie call
+    cmd += ["--best", "--strata", "-p", str(bt_thr)]
+
+    tmp_un = None
+    unmapped_gz = None
+
+    # Keep the same option to save unmapped reads
+    if save_non_mappers and non_mappers_file:
+        os.makedirs(os.path.dirname(os.path.abspath(non_mappers_file)) or ".", exist_ok=True)
+
+        unmapped_gz = non_mappers_file if non_mappers_file.endswith(".gz") else (non_mappers_file + ".gz")
+        tmp_un = unmapped_gz[:-3]
+
+        cmd += ["--un", tmp_un]
+
+    cmd += [index_base, fastq_file]
+
+    printable_cmd = " ".join(cmd)
+
+    print("\nRunning Bowtie mapping with raw NH/RC tagging:")
+    print(printable_cmd + f" | raw-tag-stream | samtools view -b -@ {view_thr} - -o {output_bam}\n")
+
+ 
+    stats = {
+        "aligned_read_ids": 0,
+        "unique_read_ids": 0,
+        "multimapper_read_ids": 0,
+        "sam_records": 0,
+        "sam_records_written": 0,
+    }
+    # Add or replace one SAM tag
+    # this avoids duplicated NH or RC tags if they already exist
+    def _add_or_replace_sam_tag(fields, tag_prefix, tag_value):
+        tag_name = tag_prefix[:2]
+        kept = []
+        for x in fields[11:]:
+            if not x.startswith(tag_name + ":"):
+                kept.append(x)
+
+        return fields[:11] + kept + [tag_prefix + str(tag_value)]
+
+    def _write_group_with_nh(group_lines, samtools_stdin):
+        # Each group is one read ID with all its bowtie hits
+        # NH is the number of hits in the group
+        # RC is always 1 in this is  mode
+        if not group_lines:
+            return
+
+        nh = len(group_lines)
+
+        stats["aligned_read_ids"] += 1
+
+        if nh == 1:
+            stats["unique_read_ids"] += 1
+        else:
+            stats["multimapper_read_ids"] += 1
+
+        for raw_line in group_lines:
+            line = raw_line.decode(errors="replace").rstrip("\n")
+            fields = line.split("\t")
+            if len(fields) < 11:
+                continue
+
+            # Add tags before BAM conversion!!
+            fields = _add_or_replace_sam_tag(fields, "NH:i:", nh)
+            fields = _add_or_replace_sam_tag(fields, "RC:i:", 1)
+
+            samtools_stdin.write(("\t".join(fields) + "\n").encode())
+            stats["sam_records_written"] += 1
+
+    with open(raw_log, "w") as lf:
+        lf.write(f"Start time: {time.strftime('%c')}\n")
+        lf.write("Command: " + printable_cmd + "\n")
+
+        bowtie = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        view = subprocess.Popen(
+            ["samtools", "view", "-b", "-@", str(view_thr), "-", "-o", output_bam],
+            stdin=subprocess.PIPE,
+        )
+        stderr_thread = threading.Thread(
+            target=_drain_stream_to_log,
+            args=(bowtie.stderr, lf),
+            daemon=True,
+        )
+        stderr_thread.start()
+
+        current_qname = None
+        current_group = []
+
+        for raw_line in iter(bowtie.stdout.readline, b""):
+
+            if raw_line.startswith(b"@"):
+                view.stdin.write(raw_line)
+                continue
+
+            stats["sam_records"] += 1
+
+            try:
+                qname = raw_line.split(b"\t", 1)[0]
+            except Exception:
+                continue
+
+            if current_qname is None:
+                current_qname = qname
+                current_group = [raw_line]
+
+            elif qname == current_qname:
+                current_group.append(raw_line)
+
+            else:
+                # If the read ID changed then the previous group is complete
+                # so now I can add NH/RC and send it to samtools
+                _write_group_with_nh(current_group, view.stdin)
+
+                current_qname = qname
+                current_group = [raw_line]
+
+        # Last read group
+        if current_group:
+            _write_group_with_nh(current_group, view.stdin)
+
+        # Close pipes so subprocesses can finish
+        bowtie.stdout.close()
+        view.stdin.close()
+
+        rc_bt = bowtie.wait()
+        rc_view = view.wait()
+
+        stderr_thread.join()
+
+        lf.write(f"\nEnd time: {time.strftime('%c')}\n")
+        lf.flush()
+
+    if rc_bt != 0 or rc_view != 0:
+        raise RuntimeError(
+            f"bowtie/raw-tag/view pipeline failed "
+            f"bowtie={rc_bt} view={rc_view}. See {raw_log}"
+        )
+
+    print(f"BAM ready with NH/RC tags: {output_bam}")
+
+    if tmp_un is not None:
+        print(f"Compressing unmapped reads with pigz {unmapped_gz}")
+        _pigz_compress(tmp_un, unmapped_gz, threads=threads)
+
+    # Read bowtie stderr summary
+    # this gives the input level mapping numbers
+    bt_total = None
+    bt_mapped = None
+
+    try:
+        with open(raw_log, "r") as lf:
+            for line in lf:
+                if line.startswith("# reads processed"):
+                    bt_total = int(line.strip().split(":")[-1].strip())
+
+                elif line.startswith("# reads with at least one alignment"):
+                    bt_mapped = int(line.strip().split(":")[-1].split()[0].strip())
+
+    except Exception:
+        pass
+
+    os.makedirs(os.path.dirname(os.path.abspath(summary_log_file)) or ".", exist_ok=True)
+
+    with open(summary_log_file, "a") as sf:
+
+        if bt_total is not None and bt_mapped is not None:
+            bt_unmapped = bt_total - bt_mapped
+
+            sf.write(
+                "Bowtie input summary: processed {0:,}, aligned {1:,} ({2:.1f}%), "
+                "unmapped {3:,} ({4:.1f}%).\n".format(
+                    bt_total,
+                    bt_mapped,
+                    (bt_mapped / max(1, bt_total)) * 100.0,
+                    bt_unmapped,
+                    (bt_unmapped / max(1, bt_total)) * 100.0,
+                )
+            )
+
+        sf.write("Alignment summary by read ID from raw stream:\n")
+
+        sf.write(
+            "  Unique mappers: {0:,} / {1:,} ({2:.1f}%)\n".format(
+                stats["unique_read_ids"],
+                stats["aligned_read_ids"],
+                (stats["unique_read_ids"] / max(1, stats["aligned_read_ids"])) * 100.0,
+            )
+        )
+
+        sf.write(
+            "  Multimappers:  {0:,} / {1:,} ({2:.1f}%)\n".format(
+                stats["multimapper_read_ids"],
+                stats["aligned_read_ids"],
+                (stats["multimapper_read_ids"] / max(1, stats["aligned_read_ids"])) * 100.0,
+            )
+        )
+
+        sf.write(f"  SAM records read: {stats['sam_records']:,}\n")
+        sf.write(f"  SAM records written: {stats['sam_records_written']:,}\n")
+        if save_non_mappers and non_mappers_file:
+            out_un = non_mappers_file if non_mappers_file.endswith(".gz") else (non_mappers_file + ".gz")
+            sf.write(f"Unmapped reads saved to: {out_un}\n")
+        sf.write("\n")
+    print(f"Mapping summary saved: {summary_log_file}\n")
+
+    return output_bam
+
 # Small heleper to open the gz files   
 def _open_text_auto(path, mode="rt"):
     if path.endswith(".gz"):
@@ -552,7 +888,7 @@ def add_NH_RC_tags_from_collapse(
     Add NH (alignments per collapsed read id) and RC using the saved collapse map.
     If rc_map_path is None, RC will be set to 1 for all mapped reads.
     """
-    print(f"\nAdding NH/RC (from collapse map) to {input_bam} ...")
+    print(f"\nAdding NH/RC to {input_bam} ...")
     rc_map = _load_rc_map(rc_map_path) if rc_map_path else None
 
     bam_in = pysam.AlignmentFile(input_bam, "rb")
@@ -577,6 +913,67 @@ def add_NH_RC_tags_from_collapse(
     print(f"NH/RC tags added and saved to {output_bam}\n")
 
 
+# 12-05-2026
+# single-pass NH tagger for raw (uncollapsed) mode
+# In raw mode RC=1 always so we dont need the collapse map at all
+# The original add_NH_RC_tags_from_collapse does 2 full BAM passes, incrasing the time and memory usage.
+# This version counts NH while reading the BAM, reducing to a single pass
+# Requires QNAMEs to be contiguous in the input BAM
+# This is consistent with bowtie-aln without a coord sort
+
+def add_NH_tags_raw(input_bam, output_bam):
+    """
+    Single-pass NH/RC tagger for raw mode (no collapse map needed).
+    RC=1 always. NH is counted from the contiguous QNAME group in the BAM.
+    Replaces add_NH_RC_tags_from_collapse when rc_map_path is None (raw pipeline).
+    """
+    print(f"\nAdding NH/RC to {input_bam} ...")
+
+    bam_in  = pysam.AlignmentFile(input_bam, "rb")
+    bam_out = pysam.AlignmentFile(output_bam, "wb", template=bam_in)
+
+    current_qname = None
+    buf           = []   # buffer for the current QNAME group
+    n_groups      = 0
+    n_reads_out   = 0
+
+    def _flush_group(buf):
+        nh = len(buf)  # NH = number of alignments for this QNAME
+        for r in buf:
+            r.set_tag("NH", nh, value_type='i')
+            r.set_tag("RC", 1,  value_type='i')   # raw mode: RC siempre 1
+            bam_out.write(r)
+
+    for read in bam_in.fetch(until_eof=True):
+        # unmapped reads: pass through sin tags
+        if read.is_unmapped:
+            bam_out.write(read)
+            n_reads_out += 1
+            continue
+
+        qn = read.query_name
+        if qn != current_qname:
+            # new group -- flush previous buffer
+            if buf:
+                _flush_group(buf)
+                n_reads_out += len(buf)
+                n_groups    += 1
+            current_qname = qn
+            buf           = [read]
+        else:
+            buf.append(read)
+
+    # last group
+    if buf:
+        _flush_group(buf)
+        n_reads_out += len(buf)
+        n_groups    += 1
+
+    bam_in.close()
+    bam_out.close()
+    print(f"NH/RC tags (raw): {n_groups:,} QNAME groups, {n_reads_out:,} reads -> {output_bam}\n")
+
+
 # I will build an support function to read my list of bams
 def _read_bam_paths(bam_list_or_bam):
     # If I have a single bam for the unique index not usual because
@@ -588,7 +985,7 @@ def _read_bam_paths(bam_list_or_bam):
     # Open the txt
     with open(bam_list_or_bam, "rt") as file:
         for line in file:
-            line = line.strip()            # remove jumps of line \n
+            line = line.strip()            
             if not line or line.startswith("#"):
                 continue
             paths.append(line)
@@ -738,22 +1135,42 @@ def build_weighted_unique_index_from_bams(bam_list_or_bam, output_index="unique_
                 "ends_pos":    ends_pos,
                 "ends_pref":   ends_pref,
             }
-    # Save the index using pickle, like an RDS in R
-    with open(output_index, "wb") as f:
-        pickle.dump(index, f)
-    print(f"Weighted unique index saved to {output_index}")
-    
-    
-    # Under development: save numpy-backed index
-    # Also save a numpy-backed directory .npidx for fast mmap-able loads
-    try:
+    # Save selected index format
+    index_format = str(index_format).lower()
+
+    if index_format not in {"npidx", "pkl", "both"}:
+        raise ValueError(
+            f"Invalid index_format: {index_format!r}. "
+            "Choose one of: 'npidx', 'pkl', or 'both'."
+        )
+
+    saved_paths = []
+
+    if index_format in {"pkl", "both"}:
+        pkl_path = output_index
+
+        # Avoid writing pickle to a path ending in .npidx
+        if pkl_path.endswith(".npidx"):
+            pkl_path = pkl_path[:-6]
+
+        if not pkl_path.endswith(".pkl"):
+            pkl_path = pkl_path + ".pkl"
+
+        with open(pkl_path, "wb") as f:
+            pickle.dump(index, f)
+
+        saved_paths.append(pkl_path)
+        print(f"Weighted unique LOW-MEM pickle index saved to {pkl_path}")
+
+    if index_format in {"npidx", "both"}:
+        # _save_index_numpy_dir() creates <prefix>.npidx unless output_index already ends with .npidx
         npidx_dir = _save_index_numpy_dir(index, output_index)
-        print(f"Also saved numpy index dir to {npidx_dir}")
-    except Exception as e:
-        print(f"Warning: failed to write .npidx index: {e}")
+        saved_paths.append(npidx_dir)
+        print(f"Weighted unique LOW-MEM NumPy index saved to {npidx_dir}")
+
+    return saved_paths
         
-        
-def _build_partial_index_from_bam_lowmem(bam_path: str):
+def _build_idx_lowmem(bam_path: str):
     """
     This helper reads a SINGLE BAM and builds a partial idx
     Instead of saving one entry per unique read I decided to go back to the idea 
@@ -799,8 +1216,9 @@ def _build_partial_index_from_bam_lowmem(bam_path: str):
 
 def build_weighted_unique_index_from_bams_lowmem(
     bam_list_or_bam,
-    output_index="unique_index.pkl",
+    output_index="unique_index",
     threads: int = 1,
+    index_format: str = "npidx"
 ):
     """
     Low-memory version of build_weighted_unique_index_from_bams, with
@@ -835,7 +1253,7 @@ def build_weighted_unique_index_from_bams_lowmem(
         for bam_path in bam_paths:
             print(f"  Processing {os.path.basename(bam_path)} (1 worker)")
 
-            starts_for_bam, ends_for_bam = _build_partial_index_from_bam_lowmem(bam_path)
+            starts_for_bam, ends_for_bam = _build_idx_lowmem(bam_path)
 
             # Merge this partial index into the global dictionaries
             for chr_strand_key, starts_by_pos in starts_for_bam.items():
@@ -850,11 +1268,11 @@ def build_weighted_unique_index_from_bams_lowmem(
 
     else:
         # Pool to process several BAMs in parallel
-        # each worker runs _build_partial_index_from_bam_lowmem(bam_path)
+        # each worker runs _build_idx_lowmem(bam_path)
         with Pool(processes=num_workers) as pool:
             for bam_path, (starts_for_bam, ends_for_bam) in zip(
                 bam_paths,
-                pool.imap_unordered(_build_partial_index_from_bam_lowmem, bam_paths),
+                pool.imap_unordered(_build_idx_lowmem, bam_paths),
             ):
                 print(f"  Received partial index for {os.path.basename(bam_path)}")
 
@@ -935,9 +1353,6 @@ def build_weighted_unique_index_from_bams_lowmem(
     except Exception as e:
         print(f"Warning: failed to write .npidx index: {e}")
 
-
-
-
 #######################################################################################################
 #   Aiming to speed up assigmnet of uwm I will use numba
 #   The logic is this:
@@ -951,7 +1366,7 @@ def build_weighted_unique_index_from_bams_lowmem(
 # before R limit
 
 # DEPRECATED (legacy v1): manual binary search helpers.
-# Replaced by np.searchsorted(). Kept temporarily for reference; safe to delete.
+# Replaced by np.searchsorted(). Kept temporarily for reference safe to delete
 @njit(cache=False, fastmath=True)
 def leftmost_start_at_or_after(positions_sorted, right_edge_R):
     """
@@ -997,7 +1412,7 @@ def leftmost_end_after(positions_sorted, left_edge_L):
 
 
 # Single-window overlap using prefix sums
-@njit(cache=False, fastmath=True)  # Added cache and fastmath
+@njit(cache=True,fastmath=True)  
 def weighted_overlap_in_window(
     left_edge_L,
     right_edge_R,
@@ -1025,7 +1440,7 @@ def weighted_overlap_in_window(
 
 
 # Many windows at once for one (chrom,strand) block
-@njit(cache=False, fastmath=True)
+@njit(cache=True, fastmath=True)
 def weighted_overlaps_batch(
     left_edges_L,       # array of L
     right_edges_R,      # array of R 
@@ -1084,13 +1499,19 @@ def choose_candidate_with_index(index, read_id, candidates, window_size, conside
     """
     Decide the most likely locus for a multimapping read using UNIQUE support
     Sinice v2.0.0.0 this is based on probs and no more the best gets all the counts
+    12-05-2026: roulette wheel now uses np.random.default_rng + rng.choice
+    instead of a pure Python loop -- same behavior, faster execution
+    seed derivation now uses FNV-1a via _stable_int_from_str (no random.Random object)
     """
-    # For random placement of reads use a fixed seed
-    rnd = random.Random(seed + _stable_int_from_str(read_id))
     # Number of candidate loci
     n = len(candidates)
     if n == 1:
         return (0, False, 1.0)
+
+    # semilla por read: XOR con seed del usuario para reproducibilidad global
+    # np.random.default_rng es mas rapido que random.Random para este uso
+    rng = np.random.default_rng(seed ^ (_stable_int_from_str(read_id) & 0xFFFFFFFF))
+
     # Precompute per-candidate centers, fist i need some empty arrays
     # This will be like empty matrices in R
     centers = np.empty(n, dtype=np.int64)
@@ -1147,22 +1568,17 @@ def choose_candidate_with_index(index, read_id, candidates, window_size, conside
 
     # Decide if this is an informative placement or effectively random
     # all_equal ~ "all scores the same"
-    all_equal = np.allclose(probs, probs[0])
+    all_equal = bool(np.allclose(probs, probs[0]))
 
     if all_equal:
         # All candidates have the same probability  == random choice
-        best_idx = rnd.randrange(n)
+        # rng.integers is faster than rnd.randrange for this
+        best_idx = int(rng.integers(n))
         had_tie = True  # mark as random resolution for downstream stats/labels
     else:
-        # Probabilistic placement: roulette-wheel sampling based on probs
-        r = rnd.random()
-        cum = 0.0
-        best_idx = n - 1  # fallback in case of tiny FP errors
-        for i, p in enumerate(probs):
-            cum += p
-            if r <= cum:
-                best_idx = i
-                break
+        # Probabilistic placement: roulette-wheel vectorizado
+        # rng.choice con p= hace lo mismo que el loop Python pero sin el loop
+        best_idx = int(rng.choice(n, p=probs))
         had_tie = False  # informative placement, not a pure tie
 
     return (best_idx, had_tie, float(probs[best_idx]))
@@ -1207,8 +1623,15 @@ def _sanitize_for_out_inplace(alignment):
     return alignment
     
 # I will use hashes to properly name read (avoid redundancy)
+# 12-05-2026: switched from MD5 to FNV-1a 64-bit
+# FNV-1a is ~3x faster than MD5 for short strings like read IDs
+# no crypto needed here, just a stable deterministic seed
 def _stable_int_from_str(s: str) -> int:
-    return int.from_bytes(hashlib.md5(s.encode('utf-8')).digest()[:8], 'little', signed=False)
+    h = 0xcbf29ce484222325
+    for c in s.encode('utf-8'):
+        h ^= c
+        h = (h * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF
+    return h
 
 # I will add a support function for RC counting
 def _get_rc_safe(read: pysam.AlignedSegment) -> int:
@@ -1226,8 +1649,6 @@ def _clear_secondary_and_supplementary(aln: pysam.AlignedSegment):
     # Make sure it's marked as mapped
     aln.flag &= ~0x4
 
-
- 
 def _expand_write(
     read: pysam.AlignedSegment,
     out_bam: pysam.AlignmentFile,
@@ -1282,7 +1703,7 @@ def _expand_write(
  
 
 # Group alignments by query name to process multimappers together
-def _group_alignments_by_qname(in_bam_path: str):
+def _group_alignments_qname(in_bam_path: str):
     # defaultdict of lists
     groups = defaultdict(list)
     # Read the BAM and group alignments
@@ -1315,11 +1736,9 @@ def _count_qname_groups(in_bam_path: str) -> int:
                 last_qname = qn
     return count
 
-def _iter_groups_streaming(in_bam_path: str):
+def _groups_qname(in_bam_path: str):
     """
-    Stream over a ordered BAM and yield groups
-    without keeping the whole file in memory
-    Assumes all alignments for a given QNAME are contiguous
+    Read ordered BAM by QNAMEs avoiding to read the hole BAM into memory
     """
     bam = pysam.AlignmentFile(in_bam_path, "rb")
     header = bam.header
@@ -1425,33 +1844,341 @@ def sort_and_index_bam(
     sort_mem: str = "2G",
     inplace: bool = True,
 ):
-    """
-    Modular samrtools sortfunction  
-    """
     tmp_sorted = bam_path if not inplace else bam_path.replace(".bam", ".sorted.bam")
-    # be conservative with threads
-    sort_threads = max(1, min(int(threads), 4))
-    total_bytes = _parse_mem_to_bytes(sort_mem)
-    # keep per-thread memory modest to avoid OOMs
-    mem_per_thread_mb = max(100, (total_bytes // max(1, sort_threads * 4)) // (1024 * 1024))
+
+    sort_threads = max(1, int(threads))
 
     subprocess.run(
         [
             "samtools", "sort",
             "-@", str(sort_threads),
-            "-m", f"{mem_per_thread_mb}M",
+            "-m", sort_mem,
             "-o", tmp_sorted,
             bam_path,
         ],
         check=True
     )
+
     if inplace:
         os.replace(tmp_sorted, bam_path)
-    # Now use try except to avoid crashes, not critical but ill keep this structure
+
+    subprocess.run(
+        ["samtools", "index", "-@", str(sort_threads), bam_path if inplace else tmp_sorted],
+        check=True
+    )
+
+# Small helper for UWM stats
+def _empty_uwm_stats():
+    """
+    Small helper to keep counters consistent across serial and parallel UWM.
+    """
+    return {
+        "total_instances": 0,
+        "unique_instances": 0,
+        "multimapper_instances": 0,
+        "tie_breaks": 0,
+        "prob_sum": 0.0,
+        "total_reads_written": 0,
+        "unique_reads_written": 0,
+        "mm_reads_written": 0,
+        "suppressed_mmap_max": 0,
+        "suppressed_equal_prob": 0,
+    }
+
+
+def _merge_uwm_stats(total, partial):
+    """
+    Merge partial UWM counters from one worker into the global counters.
+    """
+    for key in total:
+        total[key] += partial.get(key, 0)
+    return total
+
+
+def _resolve_uwm_group(
+    read_id,
+    reads,
+    index,
+    out_bam,
+    stats,
+    window_size,
+    consider_strand,
+    seed,
+    uncollapsed,
+    mmap_max,
+    suppress_equal_prob,
+):
+    """
+    Resolve one QNAME group using the UWM logic.
+
+    This is basically the inner loop of resolve_multimappers_uwm(), moved
+    to a helper so the same logic can be used inside worker processes.
+    """
+    stats["total_instances"] += 1
+
+    if len(reads) == 1:
+        chosen    = reads[0]
+        rc_chosen = 1 if uncollapsed else _get_rc_safe(chosen)
+
+        _expand_write(
+            chosen,
+            out_bam,
+            rc_chosen,
+            zt_value="unique:1",
+            keep_qname_if_rc1=uncollapsed,
+        )
+
+        stats["unique_instances"]     += 1
+        stats["unique_reads_written"] += int(rc_chosen)
+        stats["total_reads_written"]  += int(rc_chosen)
+        return
+
+    candidates = []
+
+    for loci in reads:
+        chrom   = loci.reference_name
+        r_start = loci.reference_start
+        r_end   = loci.reference_end
+        is_rev  = bool(loci.is_reverse)
+        candidates.append((chrom, r_start, r_end, is_rev))
+
+    if not candidates:
+        return
+
+    nh_for_group = None
     try:
-        pysam.index(bam_path if inplace else tmp_sorted)
+        # I assume the same NH for all these candidates
+        nh_for_group = reads[0].get_tag("NH")
     except Exception:
-        pass
+        # If no NH (should not happen) use the possible positions
+        nh_for_group = len(candidates)
+
+    if mmap_max is not None and nh_for_group is not None:
+        if nh_for_group > mmap_max:
+            # take ride of the read
+            stats["suppressed_mmap_max"] += 1
+            return
+
+    is_unique_by_tag = False
+    for aln in reads:
+        try:
+            if aln.get_tag("NH") == 1:
+                is_unique_by_tag = True
+                break
+        except Exception:
+            pass
+
+    if is_unique_by_tag:
+        # choose the primary if present, else first
+        primaries = [a for a in reads if not a.is_secondary]
+        chosen    = primaries[0] if primaries else reads[0]
+        rc_chosen = 1 if uncollapsed else _get_rc_safe(chosen)
+
+        # mark as unique (keep my ZT style)
+        _expand_write(
+            chosen,
+            out_bam,
+            rc_chosen,
+            zt_value="unique:1",
+            keep_qname_if_rc1=uncollapsed,
+        )
+        stats["unique_instances"]     += 1
+        stats["unique_reads_written"] += int(rc_chosen)
+        stats["total_reads_written"]  += int(rc_chosen)
+        return
+
+    # Resolve using the UWM index
+    # choose_candidate_with_index returns (best_idx, had_tie, prob_best)
+    best_idx, had_tie, prob = choose_candidate_with_index(
+        index=index,
+        read_id=read_id,
+        candidates=candidates,
+        window_size=window_size,
+        consider_strand=consider_strand,
+        seed=seed,
+    )
+
+    # Suppress reads with no useful information
+    if suppress_equal_prob and had_tie:
+        stats["suppressed_equal_prob"] += 1
+        return
+
+    # Let's assign the read
+    stats["multimapper_instances"] += 1
+
+    chosen_aln   = reads[best_idx]
+    rc_from_any  = 1 if uncollapsed else _get_rc_safe(chosen_aln)
+
+    stats["mm_reads_written"]    += int(rc_from_any)
+    stats["total_reads_written"] += int(rc_from_any)
+
+    if had_tie:
+        stats["tie_breaks"] += 1
+
+    stats["prob_sum"] += float(prob)
+
+    # ZT tag for multimappers (uwm vs random)
+    zt = f"{'random' if had_tie else 'uwm'}:{prob:.6f}"
+
+    _expand_write(
+        chosen_aln,
+        out_bam,
+        rc_from_any,
+        zt_value=zt,
+        keep_qname_if_rc1=uncollapsed,
+    )
+
+# Update: 12-05-2026
+# In this new verision the uwm function will be reimplemented to work in parallel
+# The idea is to speed up the process by splitting the BAMs into samller blocks
+
+# I split by complete QNAME groups, not by individual alignments
+# This is important because all hits from the same read ID must stay together
+def _split_bam_by_qname_groups(
+    input_bam,
+    tmp_dir,
+    chunk_groups=50000,
+    progress=True,
+):
+    os.makedirs(tmp_dir, exist_ok=True)
+
+    header, group_iter = _groups_qname(input_bam)
+
+    chunk_paths = []
+    chunk_i = -1
+    group_i = 0
+    out_bam = None
+
+    iterator = group_iter
+    if progress:
+        iterator = tqdm(
+            iterator,
+            desc="Chunking BAM for parallel UWM",
+            unit="readID",
+            smoothing=0.05,
+        )
+
+    for read_id, reads in iterator:
+        # Open a new chunk every chunk_groups QNAME groups
+        if group_i % chunk_groups == 0:
+            if out_bam is not None:
+                out_bam.close()
+
+            chunk_i += 1
+            chunk_path = os.path.join(tmp_dir, f"uwm_input_chunk_{chunk_i:05d}.bam")
+            chunk_paths.append(chunk_path)
+            out_bam = pysam.AlignmentFile(chunk_path, "wb", header=header)
+
+        for read in reads:
+            out_bam.write(read)
+
+        group_i += 1
+
+    if out_bam is not None:
+        out_bam.close()
+
+    return chunk_paths
+
+# Now per process I'll need to load the index
+# I decided to stop using pkl index and now I'll use the npidx version
+# Since it is suposed to be faster
+def _load_uwm_index_for_worker(index_path):
+    if os.path.isdir(index_path) or index_path.endswith(".npidx"):
+        return _load_index_numpy_dir(index_path, use_mmap=True)
+
+    with open(index_path, "rb") as f:
+        return pickle.load(f)
+
+# Resolve one temporary BAM chunk with UWM
+def _resolve_uwm_chunk_worker(worker_args):
+    (
+        chunk_id,
+        input_chunk_bam,
+        output_chunk_bam,
+        index_path,
+        window_size,
+        consider_strand,
+        seed,
+        uncollapsed,
+        mmap_max,
+        suppress_equal_prob,
+    ) = worker_args
+
+    index = _load_uwm_index_for_worker(index_path)
+    header, group_iter = _groups_qname(input_chunk_bam)
+
+    stats = _empty_uwm_stats()
+
+    with pysam.AlignmentFile(output_chunk_bam, "wb", header=header) as out_bam:
+        for read_id, reads in group_iter:
+            _resolve_uwm_group(
+                read_id=read_id,
+                reads=reads,
+                index=index,
+                out_bam=out_bam,
+                stats=stats,
+                window_size=window_size,
+                consider_strand=consider_strand,
+                seed=seed,
+                uncollapsed=uncollapsed,
+                mmap_max=mmap_max,
+                suppress_equal_prob=suppress_equal_prob,
+            )
+
+    stats["chunk_id"] = chunk_id
+    stats["input_chunk_bam"] = input_chunk_bam
+    stats["output_chunk_bam"] = output_chunk_bam
+
+    return stats
+
+# Create a new temporary input chunk for UWM
+def _make_next_uwm_chunk(
+    tmp_dir,
+    chunk_id,
+    header,
+):
+    chunk_path = os.path.join(tmp_dir, f"uwm_input_chunk_{chunk_id:05d}.bam")
+    out_bam = pysam.AlignmentFile(chunk_path, "wb", header=header)
+    return chunk_path, out_bam
+
+
+def _uwm_chunk_job(
+    pool,
+    async_results,
+    chunk_id,
+    input_chunk_bam,
+    tmp_dir,
+    index_path,
+    window_size,
+    consider_strand,
+    seed,
+    uncollapsed,
+    mmap_max,
+    suppress_equal_prob,
+):
+
+    output_chunk_bam = os.path.join(tmp_dir, f"uwm_resolved_chunk_{chunk_id:05d}.bam")
+
+    job = (
+        chunk_id,
+        input_chunk_bam,
+        output_chunk_bam,
+        index_path,
+        window_size,
+        consider_strand,
+        seed,
+        uncollapsed,
+        mmap_max,
+        suppress_equal_prob,
+    )
+
+    if pool is None:
+        # Serial fallback
+        result = _resolve_uwm_chunk_worker(job)
+        async_results.append(result)
+    else:
+        # Parallel async job
+        async_results.append(pool.apply_async(_resolve_uwm_chunk_worker, (job,)))
 
 
 # Unique Window Mode UWM
@@ -1471,182 +2198,212 @@ def resolve_multimappers_uwm(
     mmap_max: int | None = None,
     suppress_equal_prob: bool = False,
 ):
-    
     """
     Resolve multimapping reads using Unique Window Mode (UWM) based on a weighted unique index
+    This function is the second version of UWM with the parallelized implementation
     """
     start_time = time.time()
-    # Load index (support both old .pkl and new .npidx directory)
-    if os.path.isdir(index_path) or index_path.endswith(".npidx"):
-        index = _load_index_numpy_dir(index_path, use_mmap=True)
-    else:
-        # fallback to pickle for backward compatibility
-        with open(index_path, "rb") as f:
-            index = pickle.load(f)
+    n_workers = max(1, int(sort_threads))
 
-    # Call my function to group alignments by read 
-    # In collapsed mode keep the original behavior, in uncollapsed mode use streaming to save RAM
-    if uncollapsed:
-        n_groups = _count_qname_groups(query_bam_path) if progress else None
-        header, group_iter = _iter_groups_streaming(query_bam_path)
-        base_iter = group_iter
-    else:
-        groups, header = _group_alignments_by_qname(query_bam_path)
-        n_groups = len(groups)
-        base_iter = groups.items()
+    # Define the number of chunks
+    chunk_groups = 100000
 
-    # Counters for progress and report
-    total_instances = 0
-    unique_instances = 0
-    multimapper_instances = 0
-    tie_breaks = 0
-    prob_sum = 0.0  
-    total_reads_written = 0
-    unique_reads_written = 0
-    mm_reads_written = 0
-    suppressed_mmap_max = 0 
-    suppressed_equal_prob = 0
+    out_dir = os.path.dirname(os.path.abspath(output_bam_path)) or "."
+    os.makedirs(out_dir, exist_ok=True)
 
-    # I'll use pysam to open the query bam
-    # Need to be sure that the out_dir exist (this comes from siRmap)
-    os.makedirs(os.path.dirname(output_bam_path) or ".", exist_ok=True)
+    # Temporary directory for chunked input and resolved output
+    base = os.path.basename(output_bam_path).replace(".bam", "")
+    tmp_dir = os.path.join(out_dir, f".{base}.uwm_tmp")
+    os.makedirs(tmp_dir, exist_ok=True)
 
-    # Open out bam
-    with pysam.AlignmentFile(output_bam_path, "wb", header=header) as out_bam:
-        # I want a nice progress bar like in the random resolver
-        iterator = base_iter
-        if progress:
-            iterator = tqdm(
-                iterator,
-                total=n_groups,
-                desc="Resolving (UWM)",
-                unit="readID",
-                smoothing=0.05,
-            )
+    print("\nResolving multimappers with UWM in pipelined parallel mode")
+    print(f"Input BAM: {query_bam_path}")
+    print(f"Index:     {index_path}")
+    print(f"Workers:   {n_workers}")
+    print(f"Raw mode:  {uncollapsed}")
+    print(f"Window:    {window_size}")
+    print(f"Strand:    {consider_strand}")
+    print(f"Chunk size:{chunk_groups:,} QNAME groups")
+    print(f"Tmp dir:   {tmp_dir}\n")
 
-        # Go locus by locus for the possible sites
+    header, group_iter = _groups_qname(query_bam_path)
+
+    async_results = []
+    chunk_paths = []
+    chunk_id = -1
+    group_i = 0
+    out_chunk_bam = None
+    chunk_path = None
+
+    total_stats = _empty_uwm_stats()
+    worker_results = []
+
+    pool = None
+    if n_workers > 1:
+        pool = Pool(processes=n_workers)
+
+    iterator = group_iter
+    if progress:
+        iterator = tqdm(
+            iterator,
+            desc="Chunking/submitting UWM",
+            unit="readID",
+            smoothing=0.05,
+        )
+
+    try:
         for read_id, reads in iterator:
-            total_instances += 1
 
-            # Filter to candidates
-            candidates = []
-            rc_from_any = 1
-            for loci in reads:
-                # record RC (if multiple, they *should* be same for the group)
-                rc_from_any = _get_rc_safe(loci) if rc_from_any == 1 else rc_from_any
-                chrom = loci.reference_name
-                r_start = loci.reference_start
-                r_end = loci.reference_end
-                is_rev = bool(loci.is_reverse)
-                candidates.append((chrom, r_start, r_end, is_rev))
+            # Open a new chunk every chunk_groups QNAME groups
+            if group_i % chunk_groups == 0:
+                # Close and submit previous chunk
+                if out_chunk_bam is not None:
+                    out_chunk_bam.close()
 
-            if not candidates:
-                # nothing to do for this read
-                continue
-            
-            nh_for_group = None
-            try:
-                # I assume the same NH for all these candidates
-                nh_for_group = reads[0].get_tag("NH")
-            except Exception:
-                # If not NH (shuld not happen), get the posible possitions
-                nh_for_group = len(candidates)
-
-            if mmap_max is not None and nh_for_group is not None:
-                if nh_for_group > mmap_max:
-                    # take ride of the read
-                    suppressed_mmap_max += 1
-                    continue
-
-            # Decide if this read is unique:
-            # Seek for only one candidate record OR NH tag == 1 on at least one candidate
-            is_unique_by_count = (len(candidates) == 1)
-            is_unique_by_tag = False
-            for aln in reads:
-                try:
-                    if aln.get_tag("NH") == 1:
-                        is_unique_by_tag = True
-                        break
-                except Exception:
-                    pass
-
-            if is_unique_by_count or is_unique_by_tag:
-                # choose the primary if present, else first
-                primaries = [a for a in reads if not a.is_secondary]
-                chosen = primaries[0] if primaries else reads[0]
-                rc_from_any = 1 if uncollapsed else _get_rc_safe(chosen)
-                # mark as unique (keep my ZT style)
-                _expand_write(chosen, out_bam, rc_from_any, zt_value="unique:1", keep_qname_if_rc1=uncollapsed,)
-
-                unique_instances += 1
-                unique_reads_written += int(rc_from_any)
-                total_reads_written += int(rc_from_any)
-
-                # keep tqdm snappy but not spammy
-                if progress and (total_instances % 1000 == 0 or (n_groups and total_instances == n_groups)):
-                    avgp = (prob_sum / multimapper_instances) if multimapper_instances else 0.0
-                    iterator.set_postfix(
-                        uniques=unique_instances,
-                        multis=multimapper_instances,
-                        ties=tie_breaks,
-                        avgp=f"{avgp:.3f}",
+                    _uwm_chunk_job(
+                        pool=pool,
+                        async_results=async_results,
+                        chunk_id=chunk_id,
+                        input_chunk_bam=chunk_path,
+                        tmp_dir=tmp_dir,
+                        index_path=index_path,
+                        window_size=window_size,
+                        consider_strand=consider_strand,
+                        seed=seed,
+                        uncollapsed=uncollapsed,
+                        mmap_max=mmap_max,
+                        suppress_equal_prob=suppress_equal_prob,
                     )
-                continue
 
-            # Resolve using the UW index
-            # choose_candidate_with_index returns (best_idx, had_tie, prob_best)
-            best_idx, had_tie, prob = choose_candidate_with_index(
-                index=index,
-                read_id=read_id,
-                candidates=candidates,
+                # Start next chunk
+                chunk_id += 1
+                chunk_path, out_chunk_bam = _make_next_uwm_chunk(
+                    tmp_dir=tmp_dir,
+                    chunk_id=chunk_id,
+                    header=header,
+                )
+                chunk_paths.append(chunk_path)
+
+            # Write the full QNAME group to the current chunk
+            for read in reads:
+                out_chunk_bam.write(read)
+
+            group_i += 1
+
+        # Submit the last open chunk
+        if out_chunk_bam is not None:
+            out_chunk_bam.close()
+
+            _uwm_chunk_job(
+                pool=pool,
+                async_results=async_results,
+                chunk_id=chunk_id,
+                input_chunk_bam=chunk_path,
+                tmp_dir=tmp_dir,
+                index_path=index_path,
                 window_size=window_size,
                 consider_strand=consider_strand,
                 seed=seed,
+                uncollapsed=uncollapsed,
+                mmap_max=mmap_max,
+                suppress_equal_prob=suppress_equal_prob,
             )
 
-            # Supress reads with no info 
-            if suppress_equal_prob and had_tie:
-                suppressed_equal_prob += 1
-                continue
+        if not chunk_paths:
+            raise RuntimeError(f"No QNAME groups found in input BAM: {query_bam_path}")
 
-            # Let's assign the read
-            multimapper_instances += 1
-            rc_from_any = 1 if uncollapsed else _get_rc_safe(reads[0])
-            mm_reads_written += int(rc_from_any)
-            total_reads_written += int(rc_from_any)
-            if had_tie:
-                tie_breaks += 1
-            prob_sum += float(prob)
+        print(f"\nCreated/submitted {len(chunk_paths):,} temporary BAM chunk(s)")
 
-
-            # pick the corresponding pysam alignment object
-            chosen_aln = reads[best_idx]
-            rc_from_any = 1 if uncollapsed else _get_rc_safe(chosen_aln)
-
-            # ZT tag for multimappers (uwm vs random)
-            zt = f"{'random' if had_tie else 'uwm'}:{prob:.6f}"
-            _expand_write(chosen_aln, out_bam, rc_from_any, zt_value=zt, keep_qname_if_rc1=uncollapsed,)
-
-            # update the progress bar periodically
-            if progress and (total_instances % 1000 == 0 or (n_groups and total_instances == n_groups)):
-                avgp = (prob_sum / multimapper_instances) if multimapper_instances else 0.0
-                iterator.set_postfix(
-                    uniques=unique_instances,
-                    multis=multimapper_instances,
-                    ties=tie_breaks,
-                    avgp=f"{avgp:.3f}",
+        if pool is None:
+            iterator_results = async_results
+            if progress:
+                iterator_results = tqdm(
+                    iterator_results,
+                    total=len(async_results),
+                    desc="Collecting UWM chunks",
+                    unit="chunk",
+                    smoothing=0.05,
                 )
+
+            for result in iterator_results:
+                worker_results.append(result)
+                _merge_uwm_stats(total_stats, result)
+
+        else:
+            if progress:
+                iterator_results = tqdm(
+                    async_results,
+                    total=len(async_results),
+                    desc="Collecting UWM chunks",
+                    unit="chunk",
+                    smoothing=0.05,
+                )
+            else:
+                iterator_results = async_results
+
+            for async_result in iterator_results:
+                result = async_result.get()
+                worker_results.append(result)
+                _merge_uwm_stats(total_stats, result)
+
+            pool.close()
+            pool.join()
+            pool = None
+
+    except Exception:
+        if out_chunk_bam is not None:
+            try:
+                out_chunk_bam.close()
+            except Exception:
+                pass
+
+        if pool is not None:
+            pool.terminate()
+            pool.join()
+
+        raise
+
+    worker_results = sorted(worker_results, key=lambda x: x["chunk_id"])
+    resolved_chunks = [x["output_chunk_bam"] for x in worker_results]
+
+    print("\nConcatenating resolved UWM chunks...")
+
+    subprocess.run(
+        ["samtools", "cat", "-o", output_bam_path] + resolved_chunks,
+        check=True,
+    )
+
     if do_sort:
         print("Sorting and indexing resolved BAM...")
-        sort_and_index_bam(output_bam_path, threads=sort_threads, sort_mem=sort_mem, inplace=True)
+        sort_and_index_bam(
+            output_bam_path,
+            threads=sort_threads,
+            sort_mem=sort_mem,
+            inplace=True,
+        )
 
-    # Compute summary stats once we are done
+    try:
+        shutil.rmtree(tmp_dir)
+    except Exception as e:
+        print(f"Warning: failed to remove tmp dir {tmp_dir}: {e}")
+
     run_time = time.time() - start_time
-    pct_uni = (unique_instances / max(1, total_instances)) * 100.0
-    pct_mm = (multimapper_instances / max(1, total_instances)) * 100.0
-    avgp = (prob_sum / max(1, multimapper_instances))
 
-    # Console summary (keep my style)
+    total_instances        = total_stats["total_instances"]
+    unique_instances       = total_stats["unique_instances"]
+    multimapper_instances  = total_stats["multimapper_instances"]
+    tie_breaks             = total_stats["tie_breaks"]
+    prob_sum               = total_stats["prob_sum"]
+    total_reads_written    = total_stats["total_reads_written"]
+    unique_reads_written   = total_stats["unique_reads_written"]
+    mm_reads_written       = total_stats["mm_reads_written"]
+    suppressed_mmap_max    = total_stats["suppressed_mmap_max"]
+    suppressed_equal_prob  = total_stats["suppressed_equal_prob"]
+
+    pct_uni = (unique_instances / max(1, total_instances)) * 100.0
+    pct_mm  = (multimapper_instances / max(1, total_instances)) * 100.0
+    avgp    = (prob_sum / max(1, multimapper_instances))
+
     print("\nSummary (UWM):")
     _inst_label = "Read instances" if uncollapsed else "Collapsed instances"
     print(f" {_inst_label} analyzed: {total_instances:,}")
@@ -1656,6 +2413,7 @@ def resolve_multimappers_uwm(
     print(f" Mean UWM confidence:          {avgp:.3f}")
     print(f" Output BAM: {output_bam_path}")
     print(f" Window={window_size}, Strand-aware={consider_strand}, Seed={seed}")
+    print(f" Workers={n_workers}, Chunks={len(chunk_paths)}")
     print(f" Suppressed by mmap_max:       {suppressed_mmap_max:,}")
     print(f" Suppressed equal-prob:        {suppressed_equal_prob:,}")
     _written_label = "Reads written" if uncollapsed else "Reads written (expanded)"
@@ -1667,6 +2425,7 @@ def resolve_multimappers_uwm(
     # Now save the same info to a log for nextflow
     if summary_log_file:
         os.makedirs(os.path.dirname(os.path.abspath(summary_log_file)) or ".", exist_ok=True)
+
         with open(summary_log_file, "a") as sf:
             sf.write("=== UWM Resolution ===\n")
             sf.write(f"Input BAM: {query_bam_path}\n")
@@ -1674,6 +2433,8 @@ def resolve_multimappers_uwm(
             sf.write(f"Window: {window_size}\n")
             sf.write(f"Strand-aware: {consider_strand}\n")
             sf.write(f"Seed: {seed}\n")
+            sf.write(f"Workers: {n_workers}\n")
+            sf.write(f"Chunks: {len(chunk_paths)}\n")
             _inst_label_log = "Read instances analyzed" if uncollapsed else "Collapsed instances analyzed"
             sf.write(f"{_inst_label_log}: {total_instances}\n")
             sf.write(f"Unique instances kept: {unique_instances} ({pct_uni:.1f}%)\n")
@@ -1690,9 +2451,6 @@ def resolve_multimappers_uwm(
             sf.write(f"Multimappers: {mm_reads_written:,}\n\n")
 
     return output_bam_path
-
-
-
 
 # Radom placement of multimappers
 def assign_multimappers_randomly(
@@ -1716,10 +2474,10 @@ def assign_multimappers_randomly(
     print("\nassigning multimappers randomly")
 
     if uncollapsed:
-        header, group_iter = _iter_groups_streaming(bam_file)
+        header, group_iter = _groups_qname(bam_file)
         iterator = tqdm(group_iter, desc="Randomly resolve multimappers")
     else:
-        groups, header = _group_alignments_by_qname(bam_file)
+        groups, header = _group_alignments_qname(bam_file)
         iterator = tqdm(groups.items(), desc="Randomly resolve multimappers")
     total_instances = 0
     unique_instances = 0
@@ -1825,10 +2583,9 @@ def main():
             "the script also writes a <prefix>.npidx directory with uncompressed "
             "NumPy (.npy) arrays (memory-map friendly). You may pass either "
             "a .pkl filename or a directory name ending with .npidx to use/load "
-            "the NumPy-backed index directly"
-        ),
-    )
+            "the NumPy-backed index directly"),)
     p_idx.add_argument("--threads", type=int, default=1,help="Threads / workers for building the UNIQUE index (parallel over BAMs). Default=1")
+    p_idx.add_argument("--format",choices=["npidx", "pkl", "both"],default="npidx",help=("Output format for the UWM unique index (npidx or pkl)"),)
     
     # UWM resolve arguments
     p_res_uwm = sub.add_parser("resolve-uwm", help="Resolve multimappers using the UWM mode and write expanded BAMs by RC (read counts of collapsed reads)")
@@ -1898,25 +2655,45 @@ def main():
             sf.write("Completed.\n\n")
 
         # map (already-collapsed) FASTQ with Bowtie
-        tmp_bam = mapped_bam.replace(".bam", ".tmp.bam")
-        run_bowtie(
-            fastq_file=args.fastq,
-            index_base=args.index,
-            output_bam=tmp_bam,
-            mismatches=args.mismatches,
-            save_non_mappers=(args.save_np == "yes"),
-            non_mappers_file=args.non_mappers,
-            threads=args.threads,
-            sort_mem=args.sort_mem,
-            index_output_bam=False,
-            summary_log_file=summary_log_file,
-            max_multimaps=args.max_multimaps,
-        )
+        # Raw mode optimization:
+        # In raw mode RC=1, so we can add NH/RC directly while streaming Bowtie SAM.
+        # This avoids writing tmp.bam and then reading/writing a second BAM just for tags.
+        if rc_map_path is None:
+            run_bowtie_raw_tagged(
+                fastq_file=args.fastq,
+                index_base=args.index,
+                output_bam=mapped_bam,
+                mismatches=args.mismatches,
+                save_non_mappers=(args.save_np == "yes"),
+                non_mappers_file=args.non_mappers,
+                threads=args.threads,
+                summary_log_file=summary_log_file,
+                max_multimaps=args.max_multimaps,
+            )
 
-        # add NH RC using collapse map if provided; else RC=1
-        add_NH_RC_tags_from_collapse(tmp_bam, rc_map_path, mapped_bam)
-        os.remove(tmp_bam)
-        print(f"Added NH/RC tags to: {mapped_bam}")
+        else:
+            tmp_bam = mapped_bam.replace(".bam", ".tmp.bam")
+
+            run_bowtie(
+                fastq_file=args.fastq,
+                index_base=args.index,
+                output_bam=tmp_bam,
+                mismatches=args.mismatches,
+                save_non_mappers=(args.save_np == "yes"),
+                non_mappers_file=args.non_mappers,
+                threads=args.threads,
+                sort_mem=args.sort_mem,
+                index_output_bam=False,
+                summary_log_file=summary_log_file,
+                max_multimaps=args.max_multimaps,
+            )
+
+            add_NH_RC_tags_from_collapse(tmp_bam, rc_map_path, mapped_bam)
+
+            try:
+                os.remove(tmp_bam)
+            except Exception:
+                pass
 
         # final append
         with open(summary_log_file, "a") as sf:
@@ -1929,16 +2706,15 @@ def main():
             output_fastq=args.out,
             add_suffix=not args.no_suffix,
         )
-    # Add threads for parallel version
+
     elif args.cmd == "build-index-uwm":
-        #build_weighted_unique_index_from_bams(args.bams, args.out) (close to be fully deprecated)
         build_weighted_unique_index_from_bams_lowmem(
             bam_list_or_bam=args.bams,
             output_index=args.out,
             threads=args.threads,
+            index_format=args.format,
         )
         
-    # New uwm using probs for asignment    
     elif args.cmd == "resolve-uwm":
         summary_log = args.summary_log or args.out_bam.replace(".bam", ".uwm.summary.log")
         resolve_multimappers_uwm(

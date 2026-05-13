@@ -51,6 +51,9 @@ if (params.max_multimaps != null) {
 
 params.raw_mode = params.raw_mode ?: false
 // Only for benchmaks
+params.map_only = (params.map_only != null ? params.map_only.toString().toLowerCase() in ['true','1','yes','y'] : false)
+params.skip_qc_pullseq = (params.skip_qc_pullseq != null ? params.skip_qc_pullseq.toString().toLowerCase() in ['true','1','yes','y']: false)
+
 params.uwm_mmap_max = params.uwm_mmap_max ?: null
 if (params.uwm_mmap_max != null) {
     try {
@@ -80,6 +83,7 @@ params.n_mismatch    = params.n_mismatch    ?: 1 // integer value (bowtie allows
 params.index_thr     = params.index_thr ?: 1 // the max number will be the number of libraries
 params.offrate_sm  = params.offrate_sm  ?: 4
 params.thr_sm      = params.thr_sm      ?: 12
+params.resolve_cpus = params.resolve_cpus ?: 2
 params.save_non_mappers = (
     params.save_non_mappers != null
         ? params.save_non_mappers.toString().toLowerCase() in ['true','1','yes','y']
@@ -646,7 +650,7 @@ process build_unique_index {
     
 
   output:
-    path "unique_index.pkl", emit: uniq_idx
+    path "unique_index.npidx", emit: uniq_idx
 
 
   publishDir "${results_dir}/06.uwm_index", mode: 'copy'
@@ -656,13 +660,14 @@ process build_unique_index {
   python ${siRmap_script} build-index-uwm \
                           --bams bam_list.txt \
                           --threads ${params.index_thr} \
-                          --out unique_index.pkl 
+                          --out unique_index \
+                          --format npidx
   """
 }
 
 process resolve_uwm { 
   tag { bam.baseName }
-  cpus params.thr_sm
+  cpus params.resolve_cpus
   memory params.smem_sm
 
   input:
@@ -685,7 +690,7 @@ process resolve_uwm {
     --index ${uniq_idx} \
     --window ${params.wins_sm} \
     --out-bam "\${SAMPLE}.expanded.bam" \
-    --threads ${params.thr_sm} \
+    --threads ${params.resolve_cpus}\
     --sort-mem ${params.smem_sm} \
     --seed 123 ${ params.consider_strand ? '--strand' : '' }  \
     ${ params.raw_mode ? '--raw' : '' } \
@@ -1035,6 +1040,7 @@ process edgeR_dea {
     """
 }
 
+
 workflow {
   
   if( !params.skip_validation ) {
@@ -1071,8 +1077,62 @@ workflow {
       rc_map_ch = map_join
     }
 
+  } else if ( params.preproc == 'none' ) {
+
+    if( params.skip_qc_pullseq ) {
+      log.info "Skipping QC and pullseq (--skip_qc_pullseq=true). Using input FASTQ directly for mapping."
+
+      if( params.raw_mode ) {
+        map_inputs_ch = reads_ch
+        rc_map_ch     = Channel.empty()
+      } else {
+        def collapsed = collapse(reads_ch, collapse_script_ch)
+
+        def fq_join = collapsed.collapsed_fq.map { fq ->
+          def id = fq.simpleName.replace('.collapsed.fastq','')
+          tuple(id, fq)
+        }
+
+        def map_join = collapsed.map_tsv.map { m ->
+          def id = m.simpleName.replace('.map.tsv','')
+          tuple(id, m)
+        }
+
+        map_inputs_ch = fq_join.join(map_join).map { sid, fq, m -> tuple(fq, m) }
+        rc_map_ch     = map_join
+      }
+
+    } else {
+      fastqc_raw = fastqc(reads_ch)
+      multiqc( fastqc_raw.qc_zip.collect() )
+
+      if( params.raw_mode ) {
+        def pulled_raw = pullseq_raw(reads_ch)
+        map_inputs_ch  = pulled_raw.fastq
+        rc_map_ch      = Channel.empty()
+      } else {
+        def collapsed = collapse(reads_ch, collapse_script_ch)
+
+        def fq_join = collapsed.collapsed_fq.map { fq ->
+          def id = fq.simpleName.replace('.collapsed.fastq','')
+          tuple(id, fq)
+        }
+
+        def map_join = collapsed.map_tsv.map { m ->
+          def id = m.simpleName.replace('.map.tsv','')
+          tuple(id, m)
+        }
+
+        def collapsed_pairs = fq_join.join(map_join).map { sid, fq, m -> tuple(fq, m) }
+        def pulled = pullseq(collapsed_pairs)
+
+        map_inputs_ch = pulled.fastq_map
+        rc_map_ch     = map_join
+      }
+    }
+
   } else {
-     
+
     fastqc_raw = fastqc(reads_ch)
     multiqc( fastqc_raw.qc_zip.collect() )
 
@@ -1081,11 +1141,11 @@ workflow {
     multiqc_tr( fastqc_tr.qc_zip.collect() )
 
     if( params.raw_mode ) {
-      def pulled_raw = pullseq_raw(trimmed)
-      map_inputs_ch = pulled_raw.fastq
-      rc_map_ch     = Channel.empty()
+      def pulled_raw = params.skip_qc_pullseq ? trimmed : pullseq_raw(trimmed)
+      map_inputs_ch  = params.skip_qc_pullseq ? trimmed : pulled_raw.fastq
+      rc_map_ch      = Channel.empty()
     } else {
-      def collapsed  = collapse(trimmed, collapse_script_ch)
+      def collapsed = collapse(trimmed, collapse_script_ch)
 
       def fq_join = collapsed.collapsed_fq.map { fq ->
         def id = fq.simpleName.replace('.collapsed.fastq','')
@@ -1097,16 +1157,17 @@ workflow {
         tuple(id, m)
       }
 
-      def collapsed_pairs = fq_join.join(map_join).map { sid, fq, m -> tuple(fq, m) }
+      if( params.skip_qc_pullseq ) {
+        map_inputs_ch = fq_join.join(map_join).map { sid, fq, m -> tuple(fq, m) }
+      } else {
+        def collapsed_pairs = fq_join.join(map_join).map { sid, fq, m -> tuple(fq, m) }
+        def pulled = pullseq(collapsed_pairs)
+        map_inputs_ch = pulled.fastq_map
+      }
 
-      def pulled = pullseq(collapsed_pairs)
-      map_inputs_ch = pulled.fastq_map
-      // dup map_join 
       rc_map_ch = map_join
     }
-  }
-
-  
+  }                                     
   def fastq_map_for_map
   if( params.map_gate == 'true' ) {
     def all_done = map_inputs_ch.collect().map { true }
@@ -1190,7 +1251,10 @@ workflow {
   } else {
     resolved_bams_ch = mapped_bam_ch
   }
-  
+  if( params.map_only ) {
+    log.info "Map-only mode enabled (--map_only=true). Stopping after mapping/resolution."
+    return
+  }
   if( params.use_rds ) {
     rds_out   = bam2Rds(bam2Rds_script_ch, resolved_bams_ch.collect())
   }

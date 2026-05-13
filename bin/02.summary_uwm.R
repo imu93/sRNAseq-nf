@@ -23,8 +23,8 @@ for (i in names(files)) {
   get_num = function(key) {
     as.numeric(gsub("[ ,]", "", sub(".*:", "", x[grepl(key, x)])))
   }
-  uq  = get_num("Expanded unique:")
-  mm  = get_num("Expanded multimappers:")
+  uq  = get_num("Unique:")
+  mm  = get_num("Multimappers:")
   ave_prob  = get_num("Mean UWM confidence:")
   total = get_num("Reads written")
   #Build data frame

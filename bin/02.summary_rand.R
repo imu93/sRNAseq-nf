@@ -5,13 +5,14 @@ names(files) = sub("\\..*", "", logs)
 
 df2plot = list()
 for (i in names(files)) {
+  
   x = files[[i]]
   get_num = function(key) {
     as.numeric(gsub("[ ,]", "", sub(".*:", "", x[grepl(key, x)])))
   }
   
-  uq  = get_num("Unique reads")
-  mm  = get_num("Multimapper reads")
+  uq  = get_num("Unique:")
+  mm  = get_num("Multimappers:")
   #rt  = get_num("Rand")
   #mm  = mm-rt
   tot = get_num("Reads written")

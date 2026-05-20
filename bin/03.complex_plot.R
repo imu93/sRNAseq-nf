@@ -1,9 +1,8 @@
 pacman::p_load(ggplot2, ggpubr, pals, reshape2, scales, dplyr,
                purrr, edgeR, tibble, stringr, grid)
 
-#args = commandArgs(trailingOnly = T)
-#c_file = args[1]
-c_file = "contrast.tsv"
+args = commandArgs(trailingOnly = T)
+c_file = args[1]
 
 fn_files  = list.files(pattern = ".expanded.firstnt.tsv")
 cls_files = list.files(pattern = ".cls_mtx.tsv")
@@ -440,17 +439,20 @@ main_grid = ggarrange(
   align = "hv"
 )
 
+spacer_bottom = ggplot() + theme_void()
+
 final_plot = ggarrange(
   legend_nt,
   main_grid,
+  spacer_bottom,
   legend_cls,
   ncol = 1,
-  nrow = 3,
-  heights = c(0.10, 2, 0.18)
+  nrow = 4,
+  heights = c(0.10, 2, .05, 0.4)
 )
 
 final_plot = annotate_figure( final_plot, top = NULL,
   bottom = NULL, left = NULL, right = NULL)
 
 ggsave("fn_cls_cpm.png",  final_plot, width = 5.5 * mixed_ncol,
-       height = 4.2 * mixed_nrow + 1.2, limitsize = FALSE)
+       height = 6 * mixed_nrow + 1.2, limitsize = FALSE)

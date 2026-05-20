@@ -14,11 +14,6 @@ def BANNER = $/
 
 log.info("\n${CYAN}${BANNER}${RESET}")
 
-
-// Note: Include the scripts for feature + fisrt nt and test
-
-
-// NEW params for annotations chkp
 params.cfeat	=	params.cfeat	?:	"rRNA,tRNA,gene,DNA,LINE,LTR"
 params.skip_validation = (params.skip_validation != null ? params.skip_validation.toString().toLowerCase() in ['true','1','yes','y']: false)
 params.mfeat	=	params.mfeat	?:	1
@@ -842,8 +837,6 @@ process plot_firstnt {
 
 
 process filter_firstnt {
-  when:
-    params.first_nt != null && params.first_nt.toString().trim().length() > 0
 
   tag { "${bam_file.simpleName}" }
 
@@ -966,7 +959,7 @@ process fn_cls{
     path contrast_file
 
   output:
-    path "fn_cls_cpm.png", emit: avg_png
+    path "*.png", emit: avg_png
 
   publishDir "${results_dir}/09.fn_plots", mode: 'copy'
 
@@ -1040,19 +1033,19 @@ process edgeR_dea {
     """
 }
 
-
 workflow {
-  
+
   if( !params.skip_validation ) {
-  validate_annotation(ann_chkp_ch, annotation_ch)
+    validate_annotation(ann_chkp_ch, annotation_ch)
   } else {
-  log.warn "Skipping annotation validation (--skip_validation=true)."
+    log.warn "Skipping annotation validation (--skip_validation=true)."
   }
- 
+
   def map_inputs_ch
   def rc_map_ch
+
   if ( params.preproc == 'fastp' ) {
-   
+
     fp_out = fastp(reads_ch)
     multiqc_fastp( fp_out.qc_json.collect() )
 
@@ -1061,71 +1054,39 @@ workflow {
       rc_map_ch     = Channel.empty()
     } else {
       def collapsed = collapse(fp_out.fastq, collapse_script_ch)
-
-      def fq_join = collapsed.collapsed_fq.map { fq ->
-        def id = fq.simpleName.replace('.collapsed.fastq','')
-        tuple(id, fq)
-      }
-
-      def map_join = collapsed.map_tsv.map { m ->
-        def id = m.simpleName.replace('.map.tsv','')
-        tuple(id, m)
-      }
-
+      def fq_join = collapsed.collapsed_fq.map { fq -> tuple(fq.simpleName.replace('.collapsed.fastq',''), fq) }
+      def map_join = collapsed.map_tsv.map  { m  -> tuple(m.simpleName.replace('.map.tsv',''), m) }
       map_inputs_ch = fq_join.join(map_join).map { sid, fq, m -> tuple(fq, m) }
-      // dup map_join
-      rc_map_ch = map_join
+      rc_map_ch     = map_join
     }
 
   } else if ( params.preproc == 'none' ) {
 
     if( params.skip_qc_pullseq ) {
       log.info "Skipping QC and pullseq (--skip_qc_pullseq=true). Using input FASTQ directly for mapping."
-
       if( params.raw_mode ) {
         map_inputs_ch = reads_ch
         rc_map_ch     = Channel.empty()
       } else {
         def collapsed = collapse(reads_ch, collapse_script_ch)
-
-        def fq_join = collapsed.collapsed_fq.map { fq ->
-          def id = fq.simpleName.replace('.collapsed.fastq','')
-          tuple(id, fq)
-        }
-
-        def map_join = collapsed.map_tsv.map { m ->
-          def id = m.simpleName.replace('.map.tsv','')
-          tuple(id, m)
-        }
-
+        def fq_join = collapsed.collapsed_fq.map { fq -> tuple(fq.simpleName.replace('.collapsed.fastq',''), fq) }
+        def map_join = collapsed.map_tsv.map  { m  -> tuple(m.simpleName.replace('.map.tsv',''), m) }
         map_inputs_ch = fq_join.join(map_join).map { sid, fq, m -> tuple(fq, m) }
         rc_map_ch     = map_join
       }
-
     } else {
       fastqc_raw = fastqc(reads_ch)
       multiqc( fastqc_raw.qc_zip.collect() )
-
       if( params.raw_mode ) {
         def pulled_raw = pullseq_raw(reads_ch)
         map_inputs_ch  = pulled_raw.fastq
         rc_map_ch      = Channel.empty()
       } else {
         def collapsed = collapse(reads_ch, collapse_script_ch)
-
-        def fq_join = collapsed.collapsed_fq.map { fq ->
-          def id = fq.simpleName.replace('.collapsed.fastq','')
-          tuple(id, fq)
-        }
-
-        def map_join = collapsed.map_tsv.map { m ->
-          def id = m.simpleName.replace('.map.tsv','')
-          tuple(id, m)
-        }
-
+        def fq_join = collapsed.collapsed_fq.map { fq -> tuple(fq.simpleName.replace('.collapsed.fastq',''), fq) }
+        def map_join = collapsed.map_tsv.map  { m  -> tuple(m.simpleName.replace('.map.tsv',''), m) }
         def collapsed_pairs = fq_join.join(map_join).map { sid, fq, m -> tuple(fq, m) }
         def pulled = pullseq(collapsed_pairs)
-
         map_inputs_ch = pulled.fastq_map
         rc_map_ch     = map_join
       }
@@ -1135,7 +1096,6 @@ workflow {
 
     fastqc_raw = fastqc(reads_ch)
     multiqc( fastqc_raw.qc_zip.collect() )
-
     trimmed   = cutadapt(reads_ch)
     fastqc_tr = fastqc_trimm(trimmed)
     multiqc_tr( fastqc_tr.qc_zip.collect() )
@@ -1146,17 +1106,8 @@ workflow {
       rc_map_ch      = Channel.empty()
     } else {
       def collapsed = collapse(trimmed, collapse_script_ch)
-
-      def fq_join = collapsed.collapsed_fq.map { fq ->
-        def id = fq.simpleName.replace('.collapsed.fastq','')
-        tuple(id, fq)
-      }
-
-      def map_join = collapsed.map_tsv.map { m ->
-        def id = m.simpleName.replace('.map.tsv','')
-        tuple(id, m)
-      }
-
+      def fq_join = collapsed.collapsed_fq.map { fq -> tuple(fq.simpleName.replace('.collapsed.fastq',''), fq) }
+      def map_join = collapsed.map_tsv.map  { m  -> tuple(m.simpleName.replace('.map.tsv',''), m) }
       if( params.skip_qc_pullseq ) {
         map_inputs_ch = fq_join.join(map_join).map { sid, fq, m -> tuple(fq, m) }
       } else {
@@ -1164,16 +1115,14 @@ workflow {
         def pulled = pullseq(collapsed_pairs)
         map_inputs_ch = pulled.fastq_map
       }
-
       rc_map_ch = map_join
     }
-  }                                     
+  }
+
   def fastq_map_for_map
   if( params.map_gate == 'true' ) {
     def all_done = map_inputs_ch.collect().map { true }
-    fastq_map_for_map = map_inputs_ch
-                      .combine(all_done)
-                      .map { pair, _ -> pair }
+    fastq_map_for_map = map_inputs_ch.combine(all_done).map { pair, _ -> pair }
   } else {
     fastq_map_for_map = map_inputs_ch
   }
@@ -1182,88 +1131,53 @@ workflow {
 
   def mapped
   if( params.raw_mode ) {
-    mapped = map_raw(
-              fastq_map_for_map,
-              genome_ch,
-              siRmap_script_ch,
-              idx.ebwt.collect()
-            )
+    mapped = map_raw( fastq_map_for_map, genome_ch, siRmap_script_ch, idx.ebwt.collect() )
   } else {
-    mapped = map_collapse(
-              fastq_map_for_map,
-              genome_ch,
-              siRmap_script_ch,
-              idx.ebwt.collect()
-            )
+    mapped = map_collapse( fastq_map_for_map, genome_ch, siRmap_script_ch, idx.ebwt.collect() )
   }
 
   def mapped_bam_ch = params.raw_mode ? mapped.raw_bam : mapped.collapsed_bam
 
-  // new if to expand unpaed reads by ID in case user need this
   if( params.expand_unmapped && !params.raw_mode && params.save_non_mappers ) {
-    def unmapped_join = mapped.unmapped_fq.map { f ->
-      def id = f.simpleName.replace('.unmapped.collapsed.fastq','')
-      tuple(id, f)
-    }
-
-    def unmapped_pairs = unmapped_join.join(rc_map_ch).map { sid, unmapped_fq, rc_map_tsv ->
-      tuple(unmapped_fq, rc_map_tsv)
-    }
-
+    def unmapped_join  = mapped.unmapped_fq.map { f -> tuple(f.simpleName.replace('.unmapped.collapsed.fastq',''), f) }
+    def unmapped_pairs = unmapped_join.join(rc_map_ch).map { sid, ufq, rc -> tuple(ufq, rc) }
     expand_unmapped(unmapped_pairs, siRmap_script_ch)
   }
 
-
   resolved_bams_ch = Channel.empty()
   uniq_idx_ch      = Channel.empty()
+
   if ( params.assign_mode == 'uwm' ) {
-    uniq_idx_ch = build_unique_index(
-                    siRmap_script_ch,
-                    mapped_bam_ch.collect()
-                  ).uniq_idx
-
-    def uwm_out = resolve_uwm(
-                    mapped_bam_ch,
-                    uniq_idx_ch,
-                    siRmap_script_ch
-                  )
-
+    uniq_idx_ch = build_unique_index( siRmap_script_ch, mapped_bam_ch.collect() ).uniq_idx
+    def uwm_out = resolve_uwm( mapped_bam_ch, uniq_idx_ch, siRmap_script_ch )
     resolved_bams_ch = uwm_out.expanded_bam
-
-    summarize_uwm(
-      uwm_out.logs.collect(),
-      summary_script_uwm_ch
-    )
-
+    summarize_uwm( uwm_out.logs.collect(), summary_script_uwm_ch )
   } else if ( params.assign_mode == 'random' ) {
-    def rand_out = resolve_random(
-                     mapped_bam_ch,
-                     siRmap_script_ch
-                   )
-
+    def rand_out = resolve_random( mapped_bam_ch, siRmap_script_ch )
     resolved_bams_ch = rand_out.expanded_bam
-
-    summarize_rand(
-      rand_out.logs.collect(),
-      summary_script_rand_ch
-    )
-
+    summarize_rand( rand_out.logs.collect(), summary_script_rand_ch )
   } else {
     resolved_bams_ch = mapped_bam_ch
   }
+
   if( params.map_only ) {
     log.info "Map-only mode enabled (--map_only=true). Stopping after mapping/resolution."
     return
   }
+
+
+  def resolved_all = resolved_bams_ch.collect()
+
   if( params.use_rds ) {
-    rds_out   = bam2Rds(bam2Rds_script_ch, resolved_bams_ch.collect())
+    rds_out = bam2Rds(bam2Rds_script_ch, resolved_all)
   }
 
-  def counts_out = firstnt_counts(resolved_bams_ch)
-    def all_counts = counts_out.counts.collect()
-    plot_firstnt(all_counts)
-    def all_fn = all_counts.map { files -> tuple('all', files) }
-  
+  def counts_out = firstnt_counts( resolved_all.flatten() )
+
+
+  def all_counts = counts_out.counts.collect()
+  plot_firstnt(all_counts)
+  def all_fn = all_counts.map { files -> tuple('all', files) }
 
   if( !params.apply_first_nt_downstream ) {
     log.info "Stopping after first-nucleotide plots (apply_first_nt_downstream=false)."
@@ -1271,36 +1185,35 @@ workflow {
   }
 
   def want_filter = params.first_nt != null && params.first_nt.toString().trim().length() > 0
-  def bams_for_quant = resolved_bams_ch
 
+
+  def bams_quant_all
   if( want_filter ) {
-    def filtered = filter_firstnt(resolved_bams_ch)
-    bams_for_quant = filtered.filtered_bams
+    def filtered  = filter_firstnt( resolved_all.flatten() )
+    bams_quant_all = filtered.filtered_bams.collect()
+  } else {
+    bams_quant_all = resolved_all
   }
-  fc = featureCounts(bams_for_quant.collect(), annotation_ch, featureCounts_script_ch)
+
+
+  fc = featureCounts(bams_quant_all, annotation_ch, featureCounts_script_ch)
   counts_only = fc.table_of_counts.filter { it.name == 'featureCounts_counts.txt' }
 
-  
   if (params.make_complex_plots) {
-    fc_bam = featureCounts_tagBam(bams_for_quant.collect(), annotation_ch, fcComplex_script_ch)
-
-    def cls_out = cls_mtx(fc_bam.tagged_bams.collect(), cls_mtx_script_ch)
-
-    def all_cls = cls_out.cls_tables.collect()
-                  .map { files -> tuple('all', files) }
-
+    fc_bam = featureCounts_tagBam(bams_quant_all, annotation_ch, fcComplex_script_ch)
+    def cls_out  = cls_mtx(fc_bam.tagged_bams.collect(), cls_mtx_script_ch)
+    def all_cls  = cls_out.cls_tables.collect().map { files -> tuple('all', files) }
     def contrast_val_ch = Channel.value( contrast_file )
-
     fn_cls( all_fn.join(all_cls), contrast_val_ch )
   }
 
-
   if (params.make_bedgraph) {
-  bam2bedgraph(bams_for_quant)
-  log.info "bedGraph generation: enabled"
+    bam2bedgraph( bams_quant_all.flatten() )
+    log.info "bedGraph generation: enabled"
   } else {
-  log.info "bedGraph generation: disabled (make_bedgraph=NULL)"
+    log.info "bedGraph generation: disabled (make_bedgraph=NULL)"
   }
+
   edgeR_dea(dea_script_ch, counts_only, contrast_ch)
 }
 
@@ -1309,3 +1222,5 @@ workflow.onComplete {
     println "Duration : ${workflow.duration}"
     println "Succeeded: ${workflow.success}"
 }
+
+

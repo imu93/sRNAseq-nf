@@ -7,9 +7,6 @@ c_file = args[1]
 fn_files  = list.files(pattern = ".expanded.firstnt.tsv")
 cls_files = list.files(pattern = ".cls_mtx.tsv")
 constrast = read.delim(c_file, sep = "\t", header = T)
-
-constrast = read.delim(c_file, sep="\t", header=TRUE, stringsAsFactors=FALSE)
-
 required = c("c_name","group")
 if (!all(required %in% colnames(constrast))) {
   stop(

@@ -769,19 +769,28 @@ process firstnt_counts {
       if (b=="A"||b=="C"||b=="G"||b=="T") { cnt[l ":" b]++; tot[l]++ }
     }
     END{
-      print "sample\\tlength\\tA\\tC\\tG\\tT\\ttotal"
-      # gather lengths
-      for (x in tot) lens[x]=1
-      n=0
-      for (x in lens) { L[++n]=x }
-      # sort numeric
-      for (i=1;i<=n;i++) for (j=i+1;j<=n;j++) if (L[i]+0 > L[j]+0) { tmp=L[i]; L[i]=L[j]; L[j]=tmp }
-      for (i=1;i<=n;i++){
-        l=L[i]
-        a=cnt[l ":A"]+0; c=cnt[l ":C"]+0; g=cnt[l ":G"]+0; t=cnt[l ":T"]+0
-        print "__SAMPLE__\\t" l "\\t" a "\\t" c "\\t" g "\\t" t "\\t" (tot[l]+0)
+    print "sample\tlength\tA\tC\tG\tT\ttotal"
+
+    if (DISABLE != "true") {
+      start = MIN
+      end   = MAX
+    } else {
+      start = 999999
+      end   = 0
+      for (x in tot) {
+        if (x + 0 < start) start = x + 0
+        if (x + 0 > end)   end   = x + 0
       }
     }
+
+    for (l = start; l <= end; l++) {
+      a = cnt[l ":A"] + 0
+      c = cnt[l ":C"] + 0
+      g = cnt[l ":G"] + 0
+      t = cnt[l ":T"] + 0
+      print "__SAMPLE__\t" l "\t" a "\t" c "\t" g "\t" t "\t" (a+c+g+t)
+    }
+  }
   ' > "\$out.tmp"
 
 

@@ -125,6 +125,7 @@ ce_prg1_Ip-ce_prg1_input	prg1	Ip	ce_prg1_Ip_2	1
 ce_prg1_Ip-ce_prg1_input	prg1	input	ce_prg1_input_1	2
 ce_prg1_Ip-ce_prg1_input	prg1	input	ce_prg1_input_2	2
 ```
+> [!IMPORTANT]
 > Our edgeR script uses the type column as a reference to look string patterns that matches the column names of the Rsubread/featureCounts table. Users can pass patterns like _Ip_prg1, _Ip_rnase_prg1, to look for specific set of libraries. 
 > The c_name column must include the library ID. For example ce_prg1_Ip_1 and ce_prg1_Ip_2 are biological replicates 1 and 2 respectively. 
 

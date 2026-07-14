@@ -233,7 +233,28 @@ for ( cont in names(conts)) {
   round((lib.size)/1e6, 2)
   # Create DGE and filter by expression
   dge = DGEList(counts=counts, group=groups, lib.size = lib.size)
-  keep = filterByExpr(dge, min.count= 5)
+  design = model.matrix(~0+dge$samples$group)
+  colnames(design) =  levels(dge$samples$group)
+  
+  # Given the concern of including very lowly expressed regions I'll build an adaptative
+  # filter for minimum expression based on median lib size.
+  #raw_lib_size = median(dge$samples$lib.size)
+  # Choose a minimum count that corresponds approximately to 1 CPM for a library of this sequencing depth
+  #ref_cpm = 1
+  
+  # How many counts are required to reach 1CPM? 
+  # CPM=(counts/lib.size)*1e6
+  # counts=CPM*(lib.size/1e6)
+  
+  # In addition, the minimum value will be 1, so for extreme cases with very low depth
+  # we will force for at least 1 CPM
+  #adap_min_count = max(1,round(ref_cpm * raw_lib_size / 1e6))
+  #message(sprintf("Adaptive filter for TMM: median library size = %.2f M reads, min.count = %d",
+  #    raw_lib_size / 1e6,adap_min_count))
+  
+  
+  
+  keep = filterByExpr(dge, min.count= 10)
   dge = dge[keep, , keep.lib.sizes=FALSE]
   print(table(keep))
   f.exp.counts = colSums(dge$counts)
@@ -267,7 +288,7 @@ for ( cont in names(conts)) {
   
   mds_gp = ggplot(df_mds, aes(dim1, dim2, color = group)) +
     geom_point(size = 12) +
-    theme_light() +
+    theme_test() +
     scale_color_manual(values = pal, breaks = lvl, labels = labs_auto, name = "") +
     xlab(sprintf("Leading logFC dim 1 %d%%", round(100 * mds$var.explained[1]))) +
     ylab(sprintf("Leading logFC dim 2 %d%%", round(100 * mds$var.explained[2]))) +
@@ -276,14 +297,13 @@ for ( cont in names(conts)) {
           axis.title=element_text(size=20),
           legend.position="bottom",
           legend.text=element_text(size=16),
-          strip.text=element_text(size=18, colour="black"),
+          strip.text=element_text(size=14, colour="black"),
           plot.margin=unit(c(.5,.5,.5,.5),"inches")) +
     guides(color = guide_legend(override.aes = list(size = 14)))
     
   mds_list[[cont]] = mds_gp
-  ##################################################################################
-  design = model.matrix(~0+dge$samples$group)
-  colnames(design) =  levels(dge$samples$group)
+  
+  
   
   ##################################################################################
   dge = estimateDisp(dge, design=design, robust=TRUE)
@@ -297,7 +317,7 @@ for ( cont in names(conts)) {
   # set the contrast
   ncont = paste0(names(ncont[1]),"-",names(ncont[2]))
   # And fit the model
-  fit = glmFit(dge,design = design, dispersion = dge$common.dispersion)
+  fit = glmFit(dge,design = design, dispersion = dge$tagwise.dispersion)
   contrast = makeContrasts(ncont,levels = design)
   cont_fc = l_lfc[cont]
   cont_fdr = l_fdr[cont]
@@ -402,7 +422,7 @@ for ( cont in names(conts)) {
   # that are not expected to be enriched in IPs and thus serve as a more stable reference for scaling.
   
   get_trimmed_category_counts = function(dge_full, category_pattern = "^rRNA_S", groups, 
-                                         min_count = 5, logratioTrim = 0.3, sumTrim = 0.05,
+                                         min_count = 10, logratioTrim = 0.3, sumTrim = 0.05,
                                          stringent = FALSE, use_all_category = FALSE) {
     
     # 1. Get the rows corresponding to the category of interest
@@ -516,7 +536,27 @@ for ( cont in names(conts)) {
   round((lib.size)/1e6, 2)
   # Create DGE and filter by expression
   dge = DGEList(counts=counts, group=groups, lib.size = lib.size)
-  keep = filterByExpr(dge, min.count= 5)
+  design = model.matrix(~0+dge$samples$group)
+  colnames(design) =  levels(dge$samples$group)
+  
+  # Given the concern of including very lowly expressed regions I'll build an adaptative
+  # filter for minimum expression based on median lib size.
+  #raw_lib_size = median(dge$samples$lib.size)
+  # Choose a minimum count that corresponds approximately to 1 CPM for a library of this sequencing depth
+  #ref_cpm = 1
+  
+  # How many counts are required to reach 1CPM? 
+  # CPM=(counts/lib.size)*1e6
+  # counts=CPM*(lib.size/1e6)
+  
+  # In addition, the minimum value will be 1, so for extreme cases with very low depth
+  # we will force for at least 1 CPM
+  #adap_min_count = max(1,round(ref_cpm * raw_lib_size / 1e6))
+  #message(sprintf("Adaptive filter for HKN: median library size = %.2f M reads, min.count = %d",
+  #                raw_lib_size / 1e6,adap_min_count))
+  
+  
+  keep = filterByExpr(dge,min.count= 10)
   dge = dge[keep, , keep.lib.sizes=FALSE]
   print(table(keep))
   
@@ -525,14 +565,11 @@ for ( cont in names(conts)) {
   normFactors = normFactors / (prod(normFactors)^(1/length(normFactors)))
   
   dge$samples$norm.factors = normFactors
-  
-  design = model.matrix(~0+dge$samples$group)
-  colnames(design) =  levels(dge$samples$group)
   dge = estimateDisp(dge, design=design, robust=TRUE)
   
   #plotBCV(dge)
   ##################################################################################
-  fit = glmFit(dge,design = design,dispersion = dge$common.dispersion)
+  fit = glmFit(dge,design = design,dispersion = dge$tagwise.dispersion)
   #plotQLDisp(fit)
   contrast = makeContrasts(ncont,levels = design)
   cont_fc = l_lfc[cont]
@@ -635,8 +672,6 @@ for ( cont in names(conts)) {
   saveRDS(dge, outDGE)
 
 }
-
-
 
 
 ##################################################################################
